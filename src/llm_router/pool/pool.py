@@ -7,8 +7,8 @@ import os
 
 import yaml
 
-from llm_router.config import ModelBackendConfig, ModelBackendConfig
-from llm_router.pool.base import HealthStatus
+from llm_router.config import ModelBackendConfig
+from llm_router.pool.base import HealthStatus, ModelBackend
 from llm_router.pool.local import LlamaCPPBackend
 from llm_router.pool.remote import RemoteBackend
 

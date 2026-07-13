@@ -3,26 +3,24 @@
 from __future__ import annotations
 
 import logging
-import sys
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from llm_router.config import GatewaySettings, RoutingStrategy
+from llm_router.config import GatewaySettings
 from llm_router.guardrails.abuse_filter import AbuseFilter
 from llm_router.guardrails.content_safety import ContentSafety
 from llm_router.guardrails.pii_filter import PiiFilter
 from llm_router.guardrails.rate_limiter import RateLimiter
 from llm_router.pool.pool import ModelPool
+from llm_router.router import RouterPolicyEngine
 from llm_router.routing.complexity import ComplexityDetector
 from llm_router.routing.hybrid import HybridRouter
 from llm_router.routing.policy import PolicyMatcher
 from llm_router.routing.round_robin import RoundRobinPolicy
-from llm_router.router import RouterPolicyEngine
 from llm_router.tracing.otel_setup import setup_otel
-from llm_router.tracing.span_attributes import SpanAttributes
 
 logger = logging.getLogger("llm-router")
 
@@ -114,7 +112,7 @@ def main():
     """CLI entry point for the FastAPI server."""
     import uvicorn
 
-    app = create_app()
+    create_app()
     uvicorn.run(
         "llm_router.server.app:app",
         host="0.0.0.0",

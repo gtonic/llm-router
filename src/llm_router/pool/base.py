@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
 
 from llm_router.config import ModelBackendConfig
 
@@ -12,6 +12,7 @@ from llm_router.config import ModelBackendConfig
 @dataclass
 class UsageInfo:
     """Token usage statistics."""
+
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
@@ -21,6 +22,7 @@ class UsageInfo:
 @dataclass
 class GenerateResult:
     """Result from a model generation call."""
+
     content: str
     model: str
     usage: UsageInfo
@@ -32,6 +34,7 @@ class GenerateResult:
 @dataclass
 class HealthStatus:
     """Health check result for a model backend."""
+
     healthy: bool
     latency_ms: float
     error: str | None = None
@@ -91,7 +94,7 @@ class ModelBackend(ABC):
             except Exception as exc:
                 last_error = exc
                 if attempt < max_retries - 1:
-                    delay = 0.2 ** attempt * 10
+                    delay = 0.2**attempt * 10
                     await asyncio.sleep(min(delay, 10))
         assert last_error is not None
         raise last_error

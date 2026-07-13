@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
-from llm_router.config import GatewaySettings, RoutingStrategy
+from llm_router.config import RoutingStrategy
 from llm_router.guardrails.abuse_filter import AbuseFilter
 from llm_router.guardrails.content_safety import ContentSafety
 from llm_router.guardrails.pii_filter import PiiFilter
@@ -86,7 +86,12 @@ class RouterPolicyEngine:
         # 3. Input abuse filter
         abuse_result = self.abuse_filter.check(full_text)
         if not abuse_result.safe:
-            logger.warning("[%s] Abuse detected (score=%.2f): %s", request_id, abuse_result.abuse_score, abuse_result.categories)
+            logger.warning(
+                "[%s] Abuse detected (score=%.2f): %s",
+                request_id,
+                abuse_result.abuse_score,
+                abuse_result.categories,
+            )
             raise Exception(f"Abuse detected: {abuse_result.categories}")
 
         # 4. Routing decision
@@ -108,7 +113,10 @@ class RouterPolicyEngine:
             result = await backend.generate(messages)
             logger.info(
                 "[%s] Request complete: model=%s tokens=%d latency=%.0fms",
-                request_id, selected_model, result.usage.total_tokens, result.latency_ms,
+                request_id,
+                selected_model,
+                result.usage.total_tokens,
+                result.latency_ms,
             )
             return result
         except Exception as exc:

@@ -2,19 +2,18 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from llm_router.pool.base import ModelBackend
 
-from llm_router.routing.base import PolicyBase, RoutingResult
+from llm_router.routing.base import RoutingResult
 
 # Complexity thresholds and keyword mappings
 SIMPLE_KEYWORDS = {"hello", "hi", "yes", "no", "ok", "thanks", "bye"}
 CODE_KEYWORDS = {"def ", "function", "class ", "import ", "const ", "let ", "var ", "print(", "console.log"}
-ANALYSIS_KEYWORDS = {"analyze", "compare", "evaluate", "summarize", "summarize", "explain", "why"}
+ANALYSIS_KEYWORDS = {"analyze", "compare", "evaluate", "summarize", "explain", "why"}
 CREATIVE_KEYWORDS = {"write", "create", "design", "compose", "story", "poem", "song"}
 
 # Mapping complexity levels to model IDs (overridable via config)

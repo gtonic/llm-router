@@ -8,13 +8,13 @@ Filters dangerous/unwanted content in model outputs:
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 
-class SafetyLevel(str, Enum):
+class SafetyLevel(StrEnum):
     """Severity levels for content safety violations."""
+
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
@@ -34,20 +34,42 @@ class ContentSafety:
 
     DANGEROUS_KEYWORDS = {
         SafetyLevel.CRITICAL: [
-            "child pornography", "pedophilia", "CSAM",
-            "terrorism", "jihadist", "suicide method",
-            "making a bomb", "making a nuclear weapon", "chemical weapon",
+            "child pornography",
+            "pedophilia",
+            "CSAM",
+            "terrorism",
+            "jihadist",
+            "suicide method",
+            "making a bomb",
+            "making a nuclear weapon",
+            "chemical weapon",
         ],
         SafetyLevel.HIGH: [
-            "hate speech", "genocide", "holocaust denial",
-            "racist", "antisemitic", "white supremacy",
-            "child sexual abuse", "bestiality",
-            "ransomware", "exploit", "malware",
+            "hate speech",
+            "genocide",
+            "holocaust denial",
+            "racist",
+            "antisemitic",
+            "white supremacy",
+            "child sexual abuse",
+            "bestiality",
+            "ransomware",
+            "exploit",
+            "malware",
         ],
         SafetyLevel.MEDIUM: [
-            "drug manufacturing", "drug production", "meth", "cocaine",
-            "weapon building", "weapon construction", "gun modification",
-            "self-harm", "self harm", "cutting", "anorexia", "bulimia",
+            "drug manufacturing",
+            "drug production",
+            "meth",
+            "cocaine",
+            "weapon building",
+            "weapon construction",
+            "gun modification",
+            "self-harm",
+            "self harm",
+            "cutting",
+            "anorexia",
+            "bulimia",
         ],
     }
 
@@ -73,10 +95,9 @@ class ContentSafety:
 
         for level in [SafetyLevel.CRITICAL, SafetyLevel.HIGH, SafetyLevel.MEDIUM]:
             for keyword in self._keywords[level]:
-                if keyword in text_lower:
-                    if level != SafetyLevel.LOW:
-                        max_level = level
-                        found_categories.append(keyword)
+                if keyword in text_lower and level != SafetyLevel.LOW:
+                    max_level = level
+                    found_categories.append(keyword)
 
         # Determine action based on severity
         action_map = {

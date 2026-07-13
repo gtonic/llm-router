@@ -5,26 +5,23 @@ Implements OpenAI-compatible endpoints plus gateway-specific routes.
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 import uuid
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 
 from llm_router.models import (
     ChatCompletionChunk,
     ChatCompletionRequest,
     ChatCompletionResponse,
     ChunkChoice,
-    FunctionCall,
     MessageRole,
     ModelInfo,
     ModelListResponse,
 )
-from llm_router.tracing.span_attributes import SpanAttributes
 
 logger = logging.getLogger("llm-router")
 router = APIRouter(prefix="/v1", tags=["llm-router"])
@@ -78,7 +75,7 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
 
         except Exception as exc:
             logger.error("[%s] Error: %s", request_id, exc)
-            raise HTTPException(status_code=500, detail=str(exc))
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     # Streaming
     async def event_generator() -> AsyncGenerator[str, None]:
@@ -120,12 +117,7 @@ async def list_models():
     if router_engine is None:
         raise HTTPException(status_code=503, detail="Router not initialized")
 
-    model_list = ModelListResponse(
-        data=[
-            ModelInfo(id=model_id)
-            for model_id in router_engine.pool.list_models()
-        ]
-    )
+    model_list = ModelListResponse(data=[ModelInfo(id=model_id) for model_id in router_engine.pool.list_models()])
     return model_list
 
 
@@ -168,7 +160,7 @@ async def check_guardrails(request: Request):
         else:
             return {"error": "Invalid mode. Use 'pii', 'abuse', or 'safety'."}
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/admin/reload")
@@ -184,4 +176,4 @@ async def reload_config():
         # TODO: Also reload model configs
         return {"status": "reloaded", "policies": len(router_engine.policy_matcher.rules)}
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc

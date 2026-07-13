@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -24,10 +25,7 @@ PII_PATTERNS = [
 
 def _text_has_pii(text: str) -> bool:
     """Check if text contains PII patterns."""
-    for pattern in PII_PATTERNS:
-        if re.search(pattern, text, re.IGNORECASE):
-            return True
-    return False
+    return any(re.search(pattern, text, re.IGNORECASE) for pattern in PII_PATTERNS)
 
 
 def _classify_task_type(text: str) -> str:
@@ -82,7 +80,7 @@ class PolicyMatcher(PolicyBase):
     def _evaluate_conditions(self, conditions: dict, messages: list[dict]) -> bool:
         """Evaluate a single rule's conditions against messages."""
         full_text = " ".join(msg.get("content", "") for msg in messages)
-        text_lower = full_text.lower()
+        full_text.lower()
 
         for key, value in conditions.items():
             if key == "contains_pii":
@@ -98,9 +96,8 @@ class PolicyMatcher(PolicyBase):
             elif key == "all":
                 if not all(self._evaluate_conditions(sub, messages) for sub in value):
                     return False
-            elif key == "any":
-                if not any(self._evaluate_conditions(sub, messages) for sub in value):
-                    return False
+            elif key == "any" and not any(self._evaluate_conditions(sub, messages) for sub in value):
+                return False
         return True
 
     async def route(

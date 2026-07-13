@@ -31,7 +31,12 @@ class HybridRouter(PolicyBase):
     # Default hybrid plan template — can be extended with LLM-based planning
     DEFAULT_PLAN = [
         HybridStep(model="small_local", task="extract_entities", description="Extract entities from input"),
-        HybridStep(model="remote_top", task="analyze", description="Perform complex analysis", depends_on="extract_entities"),
+        HybridStep(
+            model="remote_top",
+            task="analyze",
+            description="Perform complex analysis",
+            depends_on="extract_entities",
+        ),
         HybridStep(model="small_local", task="format", description="Format and sanitize output", depends_on="analyze"),
     ]
 
@@ -47,5 +52,8 @@ class HybridRouter(PolicyBase):
         return RoutingResult(
             model_id=plan.steps[0].model,
             strategy="hybrid",
-            metadata={"plan": [s.model + ": " + s.task for s in plan.steps], "plan_description": plan.steps[0].description},
+            metadata={
+                "plan": [s.model + ": " + s.task for s in plan.steps],
+                "plan_description": plan.steps[0].description,
+            },
         )

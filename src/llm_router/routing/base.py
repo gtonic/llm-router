@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 @dataclass
 class RoutingResult:
     """Result from a routing decision."""
+
     model_id: str
     strategy: str
     policy_matched: str | None = None

@@ -5,19 +5,19 @@ Uses pydantic-settings for .env loading and YAML files for model/policy configur
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 
 from pydantic_settings import BaseSettings
-
 
 # ───────────────────────────────────────────
 # Enums
 # ───────────────────────────────────────────
 
-class RoutingStrategy(str, Enum):
+
+class RoutingStrategy(StrEnum):
     """Available routing strategies."""
+
     POLICY = "policy"
     COMPLEXITY = "complexity"
     HYBRID = "hybrid"
@@ -26,8 +26,9 @@ class RoutingStrategy(str, Enum):
     COST = "cost"
 
 
-class PrivacyLevel(str, Enum):
+class PrivacyLevel(StrEnum):
     """Data privacy classification levels."""
+
     PUBLIC = "public"
     INTERNAL = "internal"
     RESTRICTED = "restricted"
@@ -38,9 +39,11 @@ class PrivacyLevel(str, Enum):
 # Dataclasses
 # ───────────────────────────────────────────
 
+
 @dataclass
 class ModelBackendConfig:
     """Configuration for a single model backend (local or remote)."""
+
     id: str
     name: str
     type: str  # "local" | "remote" | "edge"
@@ -63,6 +66,7 @@ class ModelBackendConfig:
 @dataclass
 class PolicyRule:
     """A single routing policy rule loaded from YAML."""
+
     id: str
     name: str
     description: str = ""
@@ -76,11 +80,13 @@ class PolicyRule:
 # Settings
 # ───────────────────────────────────────────
 
+
 class GatewaySettings(BaseSettings):
     """Top-level gateway configuration.
 
     Loaded from .env with ``ROUTER_`` prefix and optional YAML files.
     """
+
     # ── Core ──────────────────────────────────
     default_strategy: RoutingStrategy = RoutingStrategy.POLICY
     default_model: str = "llama-local"

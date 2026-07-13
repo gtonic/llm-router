@@ -42,8 +42,7 @@ def setup_otel(
     if otlp_enabled:
         try:
             from opentelemetry.exporter.otlp.proto.grpc.exporter import OTLPSpanExporter
-            from opentelemetry.exporter.otlp.proto.http.exporter import OTLPSpanExporter as HTTPExporter
-            from opentelemetry.exporter.otlp.proto.grpc.exporter import OTLPSpanExporter
+            # http exporter alternative available via opentelemetry-exporter-otlp-proto-http
 
             exporter = OTLPSpanExporter(
                 endpoint=otlp_endpoint,
@@ -75,4 +74,5 @@ def get_tracer(name: str = "llm-router") -> Tracer:
         Configured OpenTelemetry tracer.
     """
     from opentelemetry import trace
+
     return trace.get_tracer(name)

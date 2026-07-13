@@ -7,6 +7,7 @@ from llm_router.pool.remote import RemoteBackend
 
 __all__ = [
     "HealthStatus",
+    "LlamaCPPBackend",
     "ModelBackend",
     "ModelPool",
     "ModelBackendConfig",

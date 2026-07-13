@@ -7,10 +7,10 @@ Connects to a local LLM served via an OpenAI-compatible HTTP API
 from __future__ import annotations
 
 import time
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 from llm_router.config import ModelBackendConfig
-from llm_router.pool.base import GenerateResult, HealthStatus, ModelBackend
+from llm_router.pool.base import GenerateResult, HealthStatus, ModelBackend, UsageInfo
 
 
 class LlamaCPPBackend(ModelBackend):
@@ -47,7 +47,7 @@ class LlamaCPPBackend(ModelBackend):
     ) -> GenerateResult:
         start = time.perf_counter()
         self._ensure_client()
-        from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+        from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
         lc_messages = []
         for msg in messages:
@@ -78,7 +78,7 @@ class LlamaCPPBackend(ModelBackend):
         **kwargs,
     ) -> AsyncIterator[GenerateResult]:
         self._ensure_client()
-        from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+        from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
         lc_messages = []
         for msg in messages:

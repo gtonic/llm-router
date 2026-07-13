@@ -6,27 +6,26 @@ client can talk to the router without changes.
 
 from __future__ import annotations
 
-import json
 import uuid
 from datetime import datetime
-from enum import Enum
-from typing import Any, Generic, Literal, TypeVar
+from enum import StrEnum
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
-
 
 # ───────────────────────────────────────────
 # Enums
 # ───────────────────────────────────────────
 
-class MessageRole(str, Enum):
+
+class MessageRole(StrEnum):
     system = "system"
     user = "user"
     assistant = "assistant"
     tool = "tool"
 
 
-class FinishReason(str, Enum):
+class FinishReason(StrEnum):
     stop = "stop"
     tool_calls = "tool_calls"
     length = "length"
@@ -36,6 +35,7 @@ class FinishReason(str, Enum):
 # ───────────────────────────────────────────
 # Request Models
 # ───────────────────────────────────────────
+
 
 class FunctionCall(BaseModel):
     name: str
@@ -50,6 +50,7 @@ class ToolCall(BaseModel):
 
 class ChatMessage(BaseModel):
     """A single message in a chat turn."""
+
     role: MessageRole
     content: str | None = None
     name: str | None = None
@@ -59,6 +60,7 @@ class ChatMessage(BaseModel):
 
 class ChatCompletionRequest(BaseModel):
     """OpenAI-compatible chat completion request."""
+
     model: str
     messages: list[ChatMessage]
     tools: list[dict] | None = None
@@ -80,6 +82,7 @@ class ChatCompletionRequest(BaseModel):
 # ───────────────────────────────────────────
 # Response Models
 # ───────────────────────────────────────────
+
 
 class UsageInfo(BaseModel):
     prompt_tokens: int
@@ -110,6 +113,7 @@ class ChatCompletionChoice(BaseModel):
 
 class ChatCompletionResponse(BaseModel):
     """OpenAI-compatible chat completion response."""
+
     id: str = Field(default_factory=lambda: f"chatcmpl-{uuid.uuid4().hex[:12]}")
     object: Literal["chat.completion"] = "chat.completion"
     created: int = Field(default_factory=lambda: int(datetime.utcnow().timestamp()))
@@ -121,6 +125,7 @@ class ChatCompletionResponse(BaseModel):
 # ───────────────────────────────────────────
 # Model Registry
 # ───────────────────────────────────────────
+
 
 class ModelInfo(BaseModel):
     id: str
@@ -138,6 +143,7 @@ class ModelListResponse(BaseModel):
 # ───────────────────────────────────────────
 # Router-Specific Models
 # ───────────────────────────────────────────
+
 
 class PiiResult(BaseModel):
     has_pii: bool

@@ -42,16 +42,33 @@ class PiiFilter:
         ("ssn", re.compile(r"\b\d{3}-\d{2}-\d{4}\b")),
         ("vat_id", re.compile(r"\b(DE)?\d{11,12}\b")),
         ("post_code_city", re.compile(r"\b\d{5}[\s-]+[A-ZÜA-Zäöß]{1}[A-Za-zäöß]{1,}\b")),
-        ("vehicle_number", re.compile(r"\b([A-Z]{1,3}[\s-])?[A-ZÜÄÖ]{1,2}\s*[A-ZÜÄÖ]{1,2}[\s-]?\d{1,4}[\s-]?\d{1,4}\b")),
-        ("health_data", re.compile(r"\b(?:Diabetes|Chemotherapie|HIV|AIDS|Krebs|Alkoholkrankheit|Psychopharmaka)\b", re.IGNORECASE)),
+        (
+            "vehicle_number",
+            re.compile(r"\b([A-Z]{1,3}[\s-])?[A-ZÜÄÖ]{1,2}\s*[A-ZÜÄÖ]{1,2}[\s-]?\d{1,4}[\s-]?\d{1,4}\b"),
+        ),
+        (
+            "health_data",
+            re.compile(r"\b(?:Diabetes|Chemotherapie|HIV|AIDS|Krebs|Alkoholkrankheit|Psychopharmaka)\b", re.IGNORECASE),
+        ),
         ("date_of_birth", re.compile(r"\b(?:(?:0[1-9]|[12]\d|3[01])\.(?:0[1-9]|1[02])\.\d{4})\b")),
     ]
 
     # Health-related keywords for broader detection
     HEALTH_KEYWORDS = [
-        "diabetes", "chemotherapie", "hiv", "aid", "krebs", "alkoholkrankheit",
-        "psychopharmaka", "krebserkrankung", "suchterkrankung", "depression",
-        "bipolare störung", "schizophrenie", "autismus", "adhs",
+        "diabetes",
+        "chemotherapie",
+        "hiv",
+        "aid",
+        "krebs",
+        "alkoholkrankheit",
+        "psychopharmaka",
+        "krebserkrankung",
+        "suchterkrankung",
+        "depression",
+        "bipolare störung",
+        "schizophrenie",
+        "autismus",
+        "adhs",
     ]
 
     def __init__(self, redact: bool = True) -> None:

@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
 import time
-from dataclasses import dataclass, field
 from collections import defaultdict
+from dataclasses import dataclass
 
 
 @dataclass
@@ -52,13 +51,21 @@ class RateLimiter:
         # Check RPM limit
         rpm_allowed, remaining = self._check_rpm(client_id, now)
         if not rpm_allowed:
-            return RateLimitResult(allowed=False, remaining=remaining, error="Rate limit exceeded: too many requests per minute")
+            return RateLimitResult(
+                allowed=False,
+                remaining=remaining,
+                error="Rate limit exceeded: too many requests per minute",
+            )
 
         # Check TPM limit
         if tokens > 0:
             tpm_allowed = self._check_tpm(client_id, tokens, now)
             if not tpm_allowed:
-                return RateLimitResult(allowed=False, remaining=remaining, error="Rate limit exceeded: too many tokens per minute")
+                return RateLimitResult(
+                    allowed=False,
+                    remaining=remaining,
+                    error="Rate limit exceeded: too many tokens per minute",
+                )
 
         # All checks passed — record this request
         self._requests[client_id].append(now)

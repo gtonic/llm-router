@@ -60,9 +60,19 @@ class AbuseFilter:
 
     # Toxic/illegal content categories
     TOXIC_KEYWORDS = [
-        "hate speech", "racial slur", "genocide", "terrorism", "suicide method",
-        "child exploitation", "self harm", "drug manufacturing", "weapon building",
-        "breaking the law", "illegal activity", "fraud", "ransomware",
+        "hate speech",
+        "racial slur",
+        "genocide",
+        "terrorism",
+        "suicide method",
+        "child exploitation",
+        "self harm",
+        "drug manufacturing",
+        "weapon building",
+        "breaking the law",
+        "illegal activity",
+        "fraud",
+        "ransomware",
     ]
 
     def check(self, text: str) -> AbuseResult:
@@ -100,7 +110,7 @@ class AbuseFilter:
                     details.append(f"Detected {name} encoding")
 
         # Check leetspeak
-        for pattern, name in self.LEETSPEAK_PATTERNS:
+        for _pattern, _name in self.LEETSPEAK_PATTERNS:
             if pattern.search(text):
                 score += 0.1
                 if "leetspeak" not in categories:
