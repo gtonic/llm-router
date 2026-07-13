@@ -1,0 +1,41 @@
+# ═══════════════════════════════════════════════════════════
+# Default Routing Policies
+# ═══════════════════════════════════════════════════════════
+# Rules are evaluated in priority order (highest first).
+# The first matching rule determines the target model.
+
+rules:
+  # ── Security: PII always stays local ─────────────────────
+  - id: no_remote_pii
+    name: No external calls for PII
+    description: "If PII is detected in the prompt, route to local model only"
+    conditions:
+      contains_pii: true
+    target_model: llama-local
+    priority: 100
+
+  # ── Code generation → large local model ──────────────────
+  - id: code_generation
+    name: Code → Large Local Model
+    description: "Code-related prompts go to the largest available local model"
+    conditions:
+      task_type: code
+    target_model: llama-local
+    priority: 50
+
+  # ── Complex analysis → remote model ──────────────────────
+  - id: complex_analysis
+    name: Complex Analysis → Remote
+    description: "High-complexity analysis tasks use remote models"
+    conditions:
+      complexity: high
+    target_model: gpt4o
+    priority: 30
+
+  # ── Default fallback → remote model ──────────────────────
+  - id: default_remote
+    name: Default Remote
+    description: "Fallback to remote model for unmatched requests"
+    conditions: {}
+    target_model: gpt4o
+    priority: 0
