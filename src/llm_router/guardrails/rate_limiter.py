@@ -53,7 +53,7 @@ class RateLimiter:
         if not rpm_allowed:
             return RateLimitResult(
                 allowed=False,
-                remaining=remaining,
+                remaining_requests=remaining,
                 error="Rate limit exceeded: too many requests per minute",
             )
 
@@ -63,7 +63,7 @@ class RateLimiter:
             if not tpm_allowed:
                 return RateLimitResult(
                     allowed=False,
-                    remaining=remaining,
+                    remaining_requests=remaining,
                     error="Rate limit exceeded: too many tokens per minute",
                 )
 
@@ -72,7 +72,7 @@ class RateLimiter:
         if tokens > 0:
             self._tokens[client_id].append((now, tokens))
 
-        return RateLimitResult(allowed=True, remaining=max(0, remaining - 1))
+        return RateLimitResult(allowed=True, remaining_requests=max(0, remaining - 1))
 
     def _check_rpm(self, client_id: str, now: float) -> tuple[bool, int]:
         """Check requests-per-minute limit."""

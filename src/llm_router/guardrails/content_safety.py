@@ -20,6 +20,31 @@ class SafetyLevel(StrEnum):
     HIGH = "high"
     CRITICAL = "critical"
 
+    @property
+    def priority(self) -> int:
+        """Numeric priority for ordering (LOW=0 … CRITICAL=3)."""
+        return {"low": 0, "medium": 1, "high": 2, "critical": 3}.get(self.value, -1)
+
+    def __le__(self, other):
+        if isinstance(other, SafetyLevel):
+            return self.priority <= other.priority
+        return NotImplemented
+
+    def __lt__(self, other):
+        if isinstance(other, SafetyLevel):
+            return self.priority < other.priority
+        return NotImplemented
+
+    def __ge__(self, other):
+        if isinstance(other, SafetyLevel):
+            return self.priority >= other.priority
+        return NotImplemented
+
+    def __gt__(self, other):
+        if isinstance(other, SafetyLevel):
+            return self.priority > other.priority
+        return NotImplemented
+
 
 @dataclass
 class SafetyCheckResult:

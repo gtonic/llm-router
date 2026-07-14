@@ -37,7 +37,7 @@ class ComplexityDetector:
 
     def analyze(self, messages: list[dict]) -> ComplexityScore:
         """Analyze messages and return complexity score."""
-        full_text = " ".join(msg.get("content", "") for msg in messages)
+        full_text = " ".join(str(msg.get("content") or "") for msg in messages)
         words = full_text.split()
         word_count = len(words)
         has_newlines = full_text.count("\n")

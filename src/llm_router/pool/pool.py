@@ -71,16 +71,21 @@ class ModelPool:
     async def health_check_all(self) -> dict[str, HealthStatus]:
         """Run health checks on all backends in parallel."""
         coros = {mid: backend.health_check() for mid, backend in self._backends.items()}
-        results = dict(await asyncio.gather(*coros.values(), return_exceptions=True))
+        results_list = await asyncio.gather(*coros.values(), return_exceptions=True)
+        results: dict[str, HealthStatus] = dict(zip(coros.keys(), results_list))
         # Convert exceptions to error HealthStatus
         for mid, result in results.items():
             if isinstance(result, Exception):
                 results[mid] = HealthStatus(healthy=False, latency_ms=0, error=str(result))
-        return results  # type: ignore[return-value]
+        return results
 
     def get_healthy_models(self) -> list[str]:
         """Return IDs of healthy backends (lazy health check)."""
         import asyncio
 
-        results = asyncio.get_event_loop().run_until_complete(self.health_check_all())
-        return [mid for mid, status in results.items() if status.healthy]
+        loop = asyncio.new_event_loop()
+        try:
+            results = loop.run_until_complete(self.health_check_all())
+            return [mid for mid, status in results.items() if status.healthy]
+        finally:
+            loop.close()

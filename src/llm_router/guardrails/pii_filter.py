@@ -72,7 +72,12 @@ class PiiFilter:
     ]
 
     def __init__(self, redact: bool = True) -> None:
-        self.redact = redact
+        self._redact = redact
+
+    @property
+    def redact(self) -> bool:
+        """Whether PII should be redacted."""
+        return self._redact
 
     def check(self, text: str, mode: str = "input") -> PiiResult:
         """Check text for PII patterns.
@@ -92,7 +97,7 @@ class PiiFilter:
             matches = pattern.findall(text)
             if matches:
                 found_patterns.append(name)
-                if self.redact and name not in ("health_data",):
+                if self._redact and name not in ("health_data",):
                     result_text = pattern.sub(" [REDACTED]", result_text)
 
         # Also check health keywords
@@ -101,17 +106,17 @@ class PiiFilter:
             if kw in text_lower:
                 if "health_data" not in found_patterns:
                     found_patterns.append("health_data")
-                if self.redact:
+                if self._redact:
                     result_text = result_text.replace(kw, "[HEALTH_REDACTED]", 1)
                 break
 
         return PiiResult(
             has_pii=bool(found_patterns),
             patterns=found_patterns,
-            redacted_text=result_text if self.redact and found_patterns else None,
+            redacted_text=result_text if self._redact and found_patterns else None,
         )
 
-    def redact(self, text: str) -> str:
+    def redact_text(self, text: str) -> str:
         """Redact PII from text.
 
         Args:

@@ -63,10 +63,17 @@ class LlamaCPPBackend(ModelBackend):
         response = await self._client.ainvoke(lc_messages, timeout=self.config.timeout)
 
         elapsed = (time.perf_counter() - start) * 1000
+        usage_data = getattr(response, "response_metadata", {}).get(
+            "token_usage", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        )
         return GenerateResult(
             content=response.content,
             model=self.config.model_name,
-            usage=self._parse_usage(response),
+            usage=UsageInfo(
+                prompt_tokens=usage_data.get("prompt_tokens", 0),
+                completion_tokens=usage_data.get("completion_tokens", 0),
+                total_tokens=usage_data.get("total_tokens", 0),
+            ),
             finish_reason="stop",
             latency_ms=round(elapsed, 2),
         )
