@@ -10,9 +10,15 @@ def test_version():
 
 def test_import_config():
     """Verify config module loads."""
-    from llm_router.config import RoutingStrategy
+    from llm_router.config import (
+        GuardrailConfig,
+        RateLimitConfig,
+        RoutingStrategy,
+    )
 
     assert issubclass(RoutingStrategy, str)
+    assert issubclass(GuardrailConfig, object)
+    assert issubclass(RateLimitConfig, object)
 
 
 def test_import_models():

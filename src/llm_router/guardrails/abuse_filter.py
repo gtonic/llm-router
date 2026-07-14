@@ -50,7 +50,7 @@ class AbuseFilter:
     ENCODING_PATTERNS = [
         (re.compile(r"^[A-Za-z0-9+/]{50,}={0,2}$"), "base64_long"),  # Long base64
         (re.compile(r"^0x[a-fA-F0-9]{50,}$"), "hex_long"),  # Long hex
-        (re.compile(r"(?i)%[0-9a-f]{2}{10,}"), "url_encoded_long"),  # URL encoded
+        (re.compile(r"(?i)(?:%[0-9a-f]{2}){5,}"), "url_encoded_long"),  # URL encoded sequences (15+ chars)
     ]
 
     # Leetspeak patterns
