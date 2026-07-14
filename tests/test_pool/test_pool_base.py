@@ -55,7 +55,10 @@ class TestGenerateResult:
 
     def test_finish_reason_default(self):
         r = GenerateResult(
-            content="", model="m", usage=UsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0), finish_reason="stop"
+            content="",
+            model="m",
+            usage=UsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0),
+            finish_reason="stop",
         )
         assert r.finish_reason == "stop"
 
@@ -91,4 +94,4 @@ class TestModelBackendABC:
     def test_generate_with_retry_exists(self):
         """generate_with_retry should be a concrete method on the base class."""
         assert hasattr(ModelBackend, "generate_with_retry")
-        assert callable(getattr(ModelBackend, "generate_with_retry"))
+        assert callable(ModelBackend.generate_with_retry)

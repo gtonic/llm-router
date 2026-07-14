@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from llm_router.config import ModelBackendConfig
+from llm_router.pool.base import GenerateResult
 from llm_router.pool.remote import RemoteBackend
-from llm_router.pool.base import GenerateResult, HealthStatus
 
 
 class AsyncIteratorMock:
@@ -30,7 +30,11 @@ class AsyncIteratorMock:
 class TestRemoteBackendInit:
     def test_initialization(self):
         cfg = ModelBackendConfig(
-            id="gpt", name="GPT-4", type="remote", base_url="https://api.openai.com/v1", api_key="sk-test"
+            id="gpt",
+            name="GPT-4",
+            type="remote",
+            base_url="https://api.openai.com/v1",
+            api_key="sk-test",
         )
         backend = RemoteBackend(cfg)
         assert backend.config.id == "gpt"
@@ -40,8 +44,13 @@ class TestRemoteBackendInit:
 class TestRemoteBackendCost:
     def test_calculate_cost_zero(self):
         cfg = ModelBackendConfig(
-            id="gpt", name="GPT-4", type="remote", base_url="https://api.openai.com/v1", api_key="sk",
-            cost_per_1m_input=0.03, cost_per_1m_output=0.06,
+            id="gpt",
+            name="GPT-4",
+            type="remote",
+            base_url="https://api.openai.com/v1",
+            api_key="sk",
+            cost_per_1m_input=0.03,
+            cost_per_1m_output=0.06,
         )
         backend = RemoteBackend(cfg)
         cost = backend._calculate_cost(0, 0)
@@ -49,8 +58,13 @@ class TestRemoteBackendCost:
 
     def test_calculate_cost_nonzero(self):
         cfg = ModelBackendConfig(
-            id="gpt", name="GPT-4", type="remote", base_url="https://api.openai.com/v1", api_key="sk",
-            cost_per_1m_input=0.03, cost_per_1m_output=0.06,
+            id="gpt",
+            name="GPT-4",
+            type="remote",
+            base_url="https://api.openai.com/v1",
+            api_key="sk",
+            cost_per_1m_input=0.03,
+            cost_per_1m_output=0.06,
         )
         backend = RemoteBackend(cfg)
         cost = backend._calculate_cost(1_000_000, 1_000_000)
@@ -58,8 +72,13 @@ class TestRemoteBackendCost:
 
     def test_calculate_cost_fractional(self):
         cfg = ModelBackendConfig(
-            id="gpt", name="GPT-4", type="remote", base_url="https://api.openai.com/v1", api_key="sk",
-            cost_per_1m_input=0.03, cost_per_1m_output=0.06,
+            id="gpt",
+            name="GPT-4",
+            type="remote",
+            base_url="https://api.openai.com/v1",
+            api_key="sk",
+            cost_per_1m_input=0.03,
+            cost_per_1m_output=0.06,
         )
         backend = RemoteBackend(cfg)
         cost = backend._calculate_cost(100, 200)
@@ -70,15 +89,27 @@ class TestRemoteBackendGenerate:
     @pytest.mark.asyncio
     async def test_generate(self):
         cfg = ModelBackendConfig(
-            id="gpt", name="GPT-4", type="remote", base_url="https://api.openai.com/v1", api_key="sk-test",
+            id="gpt",
+            name="GPT-4",
+            type="remote",
+            base_url="https://api.openai.com/v1",
+            api_key="sk-test",
             model_name="gpt-4",
-            cost_per_1m_input=0.03, cost_per_1m_output=0.06,
+            cost_per_1m_input=0.03,
+            cost_per_1m_output=0.06,
         )
         backend = RemoteBackend(cfg)
 
         mock_response = MagicMock()
         mock_response.content = "GPT answer"
-        mock_response.response_metadata = {"token_usage": {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30}}
+        usage_meta = {
+            "token_usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 20,
+                "total_tokens": 30,
+            }
+        }
+        mock_response.response_metadata = usage_meta
 
         backend._ensure_client = MagicMock()
         backend._client = MagicMock()
@@ -99,7 +130,11 @@ class TestRemoteBackendGenerate:
     async def test_generate_missing_token_usage(self):
         """Should not crash if response_metadata lacks token_usage."""
         cfg = ModelBackendConfig(
-            id="gpt", name="GPT-4", type="remote", base_url="https://api.openai.com/v1", api_key="sk-test",
+            id="gpt",
+            name="GPT-4",
+            type="remote",
+            base_url="https://api.openai.com/v1",
+            api_key="sk-test",
             model_name="gpt-4",
         )
         backend = RemoteBackend(cfg)
@@ -124,7 +159,11 @@ class TestRemoteBackendStream:
     @pytest.mark.asyncio
     async def test_generate_stream(self):
         cfg = ModelBackendConfig(
-            id="gpt", name="GPT-4", type="remote", base_url="https://api.openai.com/v1", api_key="sk-test",
+            id="gpt",
+            name="GPT-4",
+            type="remote",
+            base_url="https://api.openai.com/v1",
+            api_key="sk-test",
             model_name="gpt-4",
         )
         backend = RemoteBackend(cfg)
@@ -134,7 +173,9 @@ class TestRemoteBackendStream:
 
         backend._ensure_client = MagicMock()
         backend._client = MagicMock()
-        backend._client.astream = lambda *a, **k: AsyncIteratorMock([mock_chunk])
+        backend._client.astream = (
+            lambda *a, **k: AsyncIteratorMock([mock_chunk])
+        )
 
         messages = [{"role": "user", "content": "Stream me"}]
         chunks = [c async for c in backend.generate_stream(messages)]
@@ -159,7 +200,13 @@ class TestRemoteBackendHealth:
 
     @pytest.mark.asyncio
     async def test_health_check_healthy(self):
-        cfg = ModelBackendConfig(id="gpt", name="GPT", type="remote", base_url="https://api.openai.com/v1", api_key="sk")
+        cfg = ModelBackendConfig(
+            id="gpt",
+            name="GPT",
+            type="remote",
+            base_url="https://api.openai.com/v1",
+            api_key="sk",
+        )
         backend = RemoteBackend(cfg)
 
         mock_httpx = self._make_httpx_mock(200)
@@ -170,7 +217,13 @@ class TestRemoteBackendHealth:
 
     @pytest.mark.asyncio
     async def test_health_check_unhealthy(self):
-        cfg = ModelBackendConfig(id="gpt", name="GPT", type="remote", base_url="https://api.openai.com/v1", api_key="sk")
+        cfg = ModelBackendConfig(
+            id="gpt",
+            name="GPT",
+            type="remote",
+            base_url="https://api.openai.com/v1",
+            api_key="sk",
+        )
         backend = RemoteBackend(cfg)
 
         mock_httpx = self._make_httpx_mock(500)

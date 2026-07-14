@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import pytest
-
-from llm_router.guardrails.pii_filter import PiiFilter, PiiResult
+from llm_router.guardrails.pii_filter import PiiFilter
 
 
 class TestPiiFilterInit:

@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from llm_router.config import ModelBackendConfig
+from llm_router.pool.base import GenerateResult
 from llm_router.pool.local import LlamaCPPBackend
-from llm_router.pool.base import GenerateResult, HealthStatus
 
 
 class AsyncIteratorMock:
@@ -29,7 +29,10 @@ class AsyncIteratorMock:
 
 class TestLlamaCPPBackendInit:
     def test_initialization(self):
-        cfg = ModelBackendConfig(id="lc", name="Llama", type="local", base_url="http://localhost:8080/v1")
+        cfg = ModelBackendConfig(
+            id="lc", name="Llama", type="local",
+            base_url="http://localhost:8080/v1",
+        )
         backend = LlamaCPPBackend(cfg)
         assert backend.config.id == "lc"
         assert backend._client is None
@@ -39,12 +42,23 @@ class TestLlamaCPPBackendInit:
 class TestLlamaCPPBackendGenerate:
     @pytest.mark.asyncio
     async def test_generate(self):
-        cfg = ModelBackendConfig(id="llama", name="Llama", type="local", base_url="http://localhost:8080/v1", model_name="llama-3.1-8b")
+        cfg = ModelBackendConfig(
+            id="llama", name="Llama", type="local",
+            base_url="http://localhost:8080/v1",
+            model_name="llama-3.1-8b",
+        )
         backend = LlamaCPPBackend(cfg)
 
         mock_response = MagicMock()
         mock_response.content = "Hello from Llama!"
-        mock_response.response_metadata = {"token_usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}}
+        usage_meta = {
+            "token_usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "total_tokens": 15,
+            }
+        }
+        mock_response.response_metadata = usage_meta
 
         backend._ensure_client = MagicMock()
         backend._client = MagicMock()
@@ -64,7 +78,11 @@ class TestLlamaCPPBackendGenerate:
     @pytest.mark.asyncio
     async def test_generate_calls_ainvoke(self):
         """Verify generate passes messages through correctly."""
-        cfg = ModelBackendConfig(id="llama", name="Llama", type="local", base_url="http://localhost:8080/v1", model_name="llama")
+        cfg = ModelBackendConfig(
+            id="llama", name="Llama", type="local",
+            base_url="http://localhost:8080/v1",
+            model_name="llama",
+        )
         backend = LlamaCPPBackend(cfg)
 
         mock_response = MagicMock()
@@ -74,7 +92,10 @@ class TestLlamaCPPBackendGenerate:
         backend._client = MagicMock()
         backend._client.ainvoke = AsyncMock(return_value=mock_response)
 
-        messages = [{"role": "system", "content": "Be nice"}, {"role": "user", "content": "Hello"}]
+        messages = [
+            {"role": "system", "content": "Be nice"},
+            {"role": "user", "content": "Hello"},
+        ]
         await backend.generate(messages)
 
         backend._ensure_client.assert_called_once()
@@ -87,7 +108,11 @@ class TestLlamaCPPBackendGenerate:
 class TestLlamaCPPBackendStream:
     @pytest.mark.asyncio
     async def test_generate_stream(self):
-        cfg = ModelBackendConfig(id="llama", name="Llama", type="local", base_url="http://localhost:8080/v1", model_name="llama")
+        cfg = ModelBackendConfig(
+            id="llama", name="Llama", type="local",
+            base_url="http://localhost:8080/v1",
+            model_name="llama",
+        )
         backend = LlamaCPPBackend(cfg)
 
         mock_chunk = MagicMock()
@@ -95,7 +120,9 @@ class TestLlamaCPPBackendStream:
 
         backend._ensure_client = MagicMock()
         backend._client = MagicMock()
-        backend._client.astream = lambda *a, **k: AsyncIteratorMock([mock_chunk])
+        backend._client.astream = (
+            lambda *a, **k: AsyncIteratorMock([mock_chunk])
+        )
 
         messages = [{"role": "user", "content": "Hi"}]
         chunks = [c async for c in backend.generate_stream(messages)]
@@ -121,7 +148,10 @@ class TestLlamaCPPBackendHealth:
 
     @pytest.mark.asyncio
     async def test_health_check_healthy(self):
-        cfg = ModelBackendConfig(id="llama", name="Llama", type="local", base_url="http://localhost:8080/v1")
+        cfg = ModelBackendConfig(
+            id="llama", name="Llama", type="local",
+            base_url="http://localhost:8080/v1",
+        )
         backend = LlamaCPPBackend(cfg)
 
         mock_httpx = self._make_httpx_mock(200)
@@ -132,7 +162,10 @@ class TestLlamaCPPBackendHealth:
 
     @pytest.mark.asyncio
     async def test_health_check_unhealthy(self):
-        cfg = ModelBackendConfig(id="llama", name="Llama", type="local", base_url="http://localhost:8080/v1")
+        cfg = ModelBackendConfig(
+            id="llama", name="Llama", type="local",
+            base_url="http://localhost:8080/v1",
+        )
         backend = LlamaCPPBackend(cfg)
 
         mock_httpx = self._make_httpx_mock(503)
@@ -143,7 +176,10 @@ class TestLlamaCPPBackendHealth:
 
     @pytest.mark.asyncio
     async def test_health_check_exception(self):
-        cfg = ModelBackendConfig(id="llama", name="Llama", type="local", base_url="http://localhost:8080/v1")
+        cfg = ModelBackendConfig(
+            id="llama", name="Llama", type="local",
+            base_url="http://localhost:8080/v1",
+        )
         backend = LlamaCPPBackend(cfg)
 
         mock_httpx = MagicMock()

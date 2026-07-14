@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
-
 import pytest
 
 from llm_router.config import ModelBackendConfig
@@ -39,10 +37,15 @@ class TestModelPoolInit:
         assert "model-a" in pool.list_models()
 
     def test_skips_disabled_models(self, tmp_path):
-        (tmp_path / "models.yaml").write_text(
-            "- id: disabled-model\n  name: Disabled\n  type: local\n  base_url: http://x\n  model_name: x\n  enabled: false\n",
-            encoding="utf-8",
+        yaml_content = (
+            "- id: disabled-model\n"
+            "  name: Disabled\n"
+            "  type: local\n"
+            "  base_url: http://x\n"
+            "  model_name: x\n"
+            "  enabled: false\n"
         )
+        (tmp_path / "models.yaml").write_text(yaml_content, encoding="utf-8")
         pool = ModelPool(models_dir=str(tmp_path))
         assert pool.list_models() == []
 
@@ -139,7 +142,7 @@ class TestModelPoolHealth:
 
 class TestModelPoolCreateBackend:
     def test_create_local_backend(self, tmp_path):
-        pool = ModelPool(models_dir=str(tmp_path))
+        _pool = ModelPool(models_dir=str(tmp_path))
         (tmp_path / "m.yaml").write_text(
             "- id: l1\n  name: L1\n  type: local\n  base_url: http://x\n  model_name: test\n",
             encoding="utf-8",

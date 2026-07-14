@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import pytest
-
-from llm_router.routing.complexity import ComplexityDetector, COMPLEXITY_TO_MODEL
+from llm_router.routing.complexity import COMPLEXITY_TO_MODEL, ComplexityDetector
 
 
 class TestComplexityDetector:
@@ -18,16 +16,28 @@ class TestComplexityDetector:
         assert "simple_greeting" in result.factors
 
     def test_code_request(self):
-        result = self.detector.analyze([{"role": "user", "content": "def hello(): print('world') please code something"}])
+        content = "def hello(): print('world') "
+        content += "please code something"
+        result = self.detector.analyze(
+            [{"role": "user", "content": content}]
+        )
         assert result.level in ("low", "medium")
         assert "code_related" in result.factors
 
     def test_analysis_request(self):
-        result = self.detector.analyze([{"role": "user", "content": "Please analyze and compare these two approaches"}])
+        result = self.detector.analyze(
+            [{"role": "user",
+              "content": "Please analyze and compare "
+              "these two approaches"}]
+        )
         assert "analysis_related" in result.factors
 
     def test_creative_request(self):
-        result = self.detector.analyze([{"role": "user", "content": "Write a creative story about dragons"}])
+        result = self.detector.analyze(
+            [{"role": "user",
+              "content": "Write a creative story "
+              "about dragons"}]
+        )
         assert "creative_related" in result.factors
 
     def test_long_prompt(self):
@@ -50,8 +60,16 @@ class TestComplexityDetector:
         assert "multi_line" in result.factors
 
     def test_tool_calls_increase_complexity(self):
+        tool_call = {
+            "id": "call_1",
+            "function": {"name": "test", "arguments": "{}"},
+        }
         messages = [
-            {"role": "assistant", "content": "", "tool_calls": [{"id": "call_1", "function": {"name": "test", "arguments": "{}"}}]},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [tool_call],
+            },
             {"role": "user", "content": "Next step"},
         ]
         result = self.detector.analyze(messages)

@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import pytest
-
-from llm_router.guardrails.content_safety import ContentSafety, SafetyCheckResult, SafetyLevel
+from llm_router.guardrails.content_safety import ContentSafety, SafetyLevel
 
 
 class TestSafetyLevel:

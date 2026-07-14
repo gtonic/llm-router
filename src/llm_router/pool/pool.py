@@ -72,7 +72,7 @@ class ModelPool:
         """Run health checks on all backends in parallel."""
         coros = {mid: backend.health_check() for mid, backend in self._backends.items()}
         results_list = await asyncio.gather(*coros.values(), return_exceptions=True)
-        results: dict[str, HealthStatus] = dict(zip(coros.keys(), results_list))
+        results: dict[str, HealthStatus] = dict(zip(coros.keys(), results_list, strict=True))
         # Convert exceptions to error HealthStatus
         for mid, result in results.items():
             if isinstance(result, Exception):

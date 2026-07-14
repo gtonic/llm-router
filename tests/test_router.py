@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from llm_router.config import RoutingStrategy
 from llm_router.pool.base import GenerateResult, UsageInfo
 from llm_router.router import RouterPolicyEngine
-
 
 # ── Fixtures ────────────────────────────────────────────────────────
 
@@ -476,7 +475,7 @@ class TestGenerateStream:
         engine.pool.get.return_value.generate_stream = _stream_gen
 
         async def _collect():
-            async for chunk in engine.generate_stream(
+            async for _chunk in engine.generate_stream(
                 [{"role": "user", "content": "hi"}], model="explicit"
             ):
                 pass
@@ -497,7 +496,7 @@ class TestGenerateStream:
         engine.pool.get.return_value.generate_stream = _stream_gen
 
         async def _collect():
-            async for chunk in engine.generate_stream([{"role": "user", "content": "hi"}]):
+            async for _chunk in engine.generate_stream([{"role": "user", "content": "hi"}]):
                 pass
 
         asyncio.run(_collect())
@@ -518,7 +517,7 @@ class TestGenerateStream:
         engine.pool.get.return_value.generate_stream = _stream_gen
 
         async def _collect():
-            async for chunk in engine.generate_stream([{"role": "user", "content": "hi"}]):
+            async for _chunk in engine.generate_stream([{"role": "user", "content": "hi"}]):
                 pass
 
         asyncio.run(_collect())
@@ -742,5 +741,5 @@ class TestImports:
         assert hasattr(router, "RouterPolicyEngine")
 
     def test_router_exports_engine_class(self):
-        from llm_router.router import RouterPolicyEngine as RPE
+        from llm_router.router import RouterPolicyEngine as RPE  # noqa: N817
         assert RPE is not None

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import time
-
 import pytest
 
 from llm_router.guardrails.rate_limiter import RateLimiter, RateLimitResult
@@ -34,7 +32,7 @@ class TestRateLimiter:
     @pytest.mark.asyncio
     async def test_blocks_after_rpm_limit(self):
         limiter = RateLimiter(rpm=3, tpm=10000)
-        for i in range(3):
+        for _i in range(3):
             result = await limiter.check("user2", tokens=10)
             assert result.allowed is True
 
@@ -72,7 +70,7 @@ class TestRateLimiter:
     @pytest.mark.asyncio
     async def test_remaining_includes_count(self):
         limiter = RateLimiter(rpm=5, tpm=10000)
-        for i in range(3):
+        for _i in range(3):
             result = await limiter.check("incr", tokens=10)
             assert result.allowed is True
             assert result.remaining_requests >= 0

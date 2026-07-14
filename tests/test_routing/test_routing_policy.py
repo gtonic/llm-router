@@ -5,9 +5,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-import pytest
-
-from llm_router.routing.policy import PolicyMatcher, _text_has_pii, _classify_task_type
+from llm_router.routing.policy import PolicyMatcher, _classify_task_type, _text_has_pii
 
 
 class TestPIIPatterns:

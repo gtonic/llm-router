@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import pytest
-
-from llm_router.routing.hybrid import HybridRouter, HybridPlan, HybridStep
+from llm_router.routing.hybrid import HybridPlan, HybridRouter, HybridStep
 
 
 class TestHybridStep:
