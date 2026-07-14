@@ -10,8 +10,6 @@ import time
 import uuid
 from collections.abc import AsyncGenerator
 
-from llm_router.pool.base import GenerateResult
-
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
@@ -23,6 +21,8 @@ from llm_router.models import (
     MessageRole,
     ModelInfo,
     ModelListResponse,
+)
+from llm_router.models import (
     UsageInfo as ModelsUsageInfo,
 )
 

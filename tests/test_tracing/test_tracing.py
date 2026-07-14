@@ -4,9 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-
 # ── Span Attributes Tests ─────────────────────────────────────────
 
 
@@ -149,7 +146,7 @@ class TestSetupOtel:
         with patch("opentelemetry.trace.set_tracer_provider") as mock_set_provider, \
             patch("opentelemetry.sdk.trace.TracerProvider"), \
             patch("opentelemetry.sdk.resources.Resource.create") as mock_resource, \
-            patch("opentelemetry.sdk.trace.export.ConsoleSpanExporter") as mock_exporter:
+            patch("opentelemetry.sdk.trace.export.ConsoleSpanExporter"):
 
             mock_resource.return_value = MagicMock()
 
@@ -165,7 +162,8 @@ class TestSetupOtel:
     def test_setup_otel_with_otlp_enabled(self):
         """setup_otel should try OTLP exporter when otlp_enabled=True."""
         import sys
-        from unittest.mock import MagicMock as Mock, patch
+        from unittest.mock import MagicMock as Mock
+        from unittest.mock import patch
 
         from llm_router.tracing.otel_setup import setup_otel
 
@@ -199,7 +197,8 @@ class TestSetupOtel:
     def test_setup_otel_fallback_on_import_error(self):
         """setup_otel should fallback to console exporter on ImportError."""
         import sys
-        from unittest.mock import MagicMock as Mock, patch
+        from unittest.mock import MagicMock as Mock
+        from unittest.mock import patch
 
         mock_resource = Mock()
 
@@ -244,7 +243,8 @@ class TestSetupOtel:
     def test_setup_otel_with_custom_timeout(self):
         """setup_otel should accept custom timeout for OTLP exporter."""
         import sys
-        from unittest.mock import MagicMock as Mock, patch
+        from unittest.mock import MagicMock as Mock
+        from unittest.mock import patch
 
         from llm_router.tracing.otel_setup import setup_otel
 
