@@ -30,7 +30,9 @@ class AsyncIteratorMock:
 class TestLlamaCPPBackendInit:
     def test_initialization(self):
         cfg = ModelBackendConfig(
-            id="lc", name="Llama", type="local",
+            id="lc",
+            name="Llama",
+            type="local",
             base_url="http://localhost:8080/v1",
         )
         backend = LlamaCPPBackend(cfg)
@@ -43,7 +45,9 @@ class TestLlamaCPPBackendGenerate:
     @pytest.mark.asyncio
     async def test_generate(self):
         cfg = ModelBackendConfig(
-            id="llama", name="Llama", type="local",
+            id="llama",
+            name="Llama",
+            type="local",
             base_url="http://localhost:8080/v1",
             model_name="llama-3.1-8b",
         )
@@ -79,7 +83,9 @@ class TestLlamaCPPBackendGenerate:
     async def test_generate_calls_ainvoke(self):
         """Verify generate passes messages through correctly."""
         cfg = ModelBackendConfig(
-            id="llama", name="Llama", type="local",
+            id="llama",
+            name="Llama",
+            type="local",
             base_url="http://localhost:8080/v1",
             model_name="llama",
         )
@@ -109,7 +115,9 @@ class TestLlamaCPPBackendStream:
     @pytest.mark.asyncio
     async def test_generate_stream(self):
         cfg = ModelBackendConfig(
-            id="llama", name="Llama", type="local",
+            id="llama",
+            name="Llama",
+            type="local",
             base_url="http://localhost:8080/v1",
             model_name="llama",
         )
@@ -120,9 +128,7 @@ class TestLlamaCPPBackendStream:
 
         backend._ensure_client = MagicMock()
         backend._client = MagicMock()
-        backend._client.astream = (
-            lambda *a, **k: AsyncIteratorMock([mock_chunk])
-        )
+        backend._client.astream = lambda *a, **k: AsyncIteratorMock([mock_chunk])
 
         messages = [{"role": "user", "content": "Hi"}]
         chunks = [c async for c in backend.generate_stream(messages)]
@@ -149,7 +155,9 @@ class TestLlamaCPPBackendHealth:
     @pytest.mark.asyncio
     async def test_health_check_healthy(self):
         cfg = ModelBackendConfig(
-            id="llama", name="Llama", type="local",
+            id="llama",
+            name="Llama",
+            type="local",
             base_url="http://localhost:8080/v1",
         )
         backend = LlamaCPPBackend(cfg)
@@ -163,7 +171,9 @@ class TestLlamaCPPBackendHealth:
     @pytest.mark.asyncio
     async def test_health_check_unhealthy(self):
         cfg = ModelBackendConfig(
-            id="llama", name="Llama", type="local",
+            id="llama",
+            name="Llama",
+            type="local",
             base_url="http://localhost:8080/v1",
         )
         backend = LlamaCPPBackend(cfg)
@@ -177,7 +187,9 @@ class TestLlamaCPPBackendHealth:
     @pytest.mark.asyncio
     async def test_health_check_exception(self):
         cfg = ModelBackendConfig(
-            id="llama", name="Llama", type="local",
+            id="llama",
+            name="Llama",
+            type="local",
             base_url="http://localhost:8080/v1",
         )
         backend = LlamaCPPBackend(cfg)

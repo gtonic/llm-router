@@ -173,9 +173,7 @@ class TestRemoteBackendStream:
 
         backend._ensure_client = MagicMock()
         backend._client = MagicMock()
-        backend._client.astream = (
-            lambda *a, **k: AsyncIteratorMock([mock_chunk])
-        )
+        backend._client.astream = lambda *a, **k: AsyncIteratorMock([mock_chunk])
 
         messages = [{"role": "user", "content": "Stream me"}]
         chunks = [c async for c in backend.generate_stream(messages)]

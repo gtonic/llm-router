@@ -41,6 +41,7 @@ class TestRoundRobinPolicy:
     async def test_concurrent_access(self):
         """Ensure thread safety with concurrent calls."""
         import asyncio
+
         models = ["m1", "m2", "m3"]
         router = RoundRobinPolicy(models)
 

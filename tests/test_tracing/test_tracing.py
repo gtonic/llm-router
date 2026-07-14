@@ -143,11 +143,12 @@ class TestSetupOtel:
         """setup_otel should create and set a TracerProvider."""
         from llm_router.tracing.otel_setup import setup_otel
 
-        with patch("opentelemetry.trace.set_tracer_provider") as mock_set_provider, \
-            patch("opentelemetry.sdk.trace.TracerProvider"), \
-            patch("opentelemetry.sdk.resources.Resource.create") as mock_resource, \
-            patch("opentelemetry.sdk.trace.export.ConsoleSpanExporter"):
-
+        with (
+            patch("opentelemetry.trace.set_tracer_provider") as mock_set_provider,
+            patch("opentelemetry.sdk.trace.TracerProvider"),
+            patch("opentelemetry.sdk.resources.Resource.create") as mock_resource,
+            patch("opentelemetry.sdk.trace.export.ConsoleSpanExporter"),
+        ):
             mock_resource.return_value = MagicMock()
 
             setup_otel(
@@ -172,14 +173,15 @@ class TestSetupOtel:
         mock_resource = Mock()
 
         # Create a mock module that has OTLPSpanExporter
-        mock_grpc_module = type(sys)('mock_grpc')
+        mock_grpc_module = type(sys)("mock_grpc")
         mock_grpc_module.OTLPSpanExporter = mock_otlp
 
-        with patch("opentelemetry.trace.set_tracer_provider"), \
-            patch("opentelemetry.sdk.trace.TracerProvider"), \
-            patch("opentelemetry.sdk.resources.Resource.create", return_value=mock_resource), \
-            patch.dict(sys.modules, {"opentelemetry.exporter.otlp.proto.grpc.exporter": mock_grpc_module}):
-
+        with (
+            patch("opentelemetry.trace.set_tracer_provider"),
+            patch("opentelemetry.sdk.trace.TracerProvider"),
+            patch("opentelemetry.sdk.resources.Resource.create", return_value=mock_resource),
+            patch.dict(sys.modules, {"opentelemetry.exporter.otlp.proto.grpc.exporter": mock_grpc_module}),
+        ):
             mock_otlp.return_value = Mock()
 
             setup_otel(
@@ -203,7 +205,7 @@ class TestSetupOtel:
         mock_resource = Mock()
 
         # Create a mock module that raises ImportError on OTLPSpanExporter access
-        mock_grpc_module = type(sys)('mock_grpc')
+        mock_grpc_module = type(sys)("mock_grpc")
 
         class FakeOTLPClass:
             def __init__(self, *a, **kw):
@@ -211,12 +213,13 @@ class TestSetupOtel:
 
         mock_grpc_module.OTLPSpanExporter = FakeOTLPClass
 
-        with patch("opentelemetry.trace.set_tracer_provider"), \
-            patch("opentelemetry.sdk.trace.TracerProvider"), \
-            patch("opentelemetry.sdk.resources.Resource.create", return_value=mock_resource), \
-            patch("opentelemetry.sdk.trace.export.ConsoleSpanExporter") as mock_console, \
-            patch.dict(sys.modules, {"opentelemetry.exporter.otlp.proto.grpc.exporter": mock_grpc_module}):
-
+        with (
+            patch("opentelemetry.trace.set_tracer_provider"),
+            patch("opentelemetry.sdk.trace.TracerProvider"),
+            patch("opentelemetry.sdk.resources.Resource.create", return_value=mock_resource),
+            patch("opentelemetry.sdk.trace.export.ConsoleSpanExporter") as mock_console,
+            patch.dict(sys.modules, {"opentelemetry.exporter.otlp.proto.grpc.exporter": mock_grpc_module}),
+        ):
             from llm_router.tracing.otel_setup import setup_otel
 
             setup_otel(otlp_enabled=True)
@@ -227,18 +230,19 @@ class TestSetupOtel:
         """setup_otel should use default service name when not specified."""
         from llm_router.tracing.otel_setup import setup_otel
 
-        with patch("opentelemetry.trace.set_tracer_provider"), \
-            patch("opentelemetry.sdk.trace.TracerProvider"), \
-            patch("opentelemetry.sdk.resources.Resource.create") as mock_resource, \
-            patch("opentelemetry.sdk.trace.export.ConsoleSpanExporter"):
-
+        with (
+            patch("opentelemetry.trace.set_tracer_provider"),
+            patch("opentelemetry.sdk.trace.TracerProvider"),
+            patch("opentelemetry.sdk.resources.Resource.create") as mock_resource,
+            patch("opentelemetry.sdk.trace.export.ConsoleSpanExporter"),
+        ):
             mock_resource.return_value = MagicMock()
 
             setup_otel()
 
             # Verify service.name was passed to Resource.create
             calls = [str(c) for c in mock_resource.call_args_list]
-            assert any('llm-router' in c for c in calls)
+            assert any("llm-router" in c for c in calls)
 
     def test_setup_otel_with_custom_timeout(self):
         """setup_otel should accept custom timeout for OTLP exporter."""
@@ -252,14 +256,15 @@ class TestSetupOtel:
         mock_otlp = Mock()
 
         # Create a mock module that has OTLPSpanExporter
-        mock_grpc_module = type(sys)('mock_grpc')
+        mock_grpc_module = type(sys)("mock_grpc")
         mock_grpc_module.OTLPSpanExporter = mock_otlp
 
-        with patch("opentelemetry.trace.set_tracer_provider"), \
-            patch("opentelemetry.sdk.trace.TracerProvider"), \
-            patch("opentelemetry.sdk.resources.Resource.create", return_value=mock_resource), \
-            patch.dict(sys.modules, {"opentelemetry.exporter.otlp.proto.grpc.exporter": mock_grpc_module}):
-
+        with (
+            patch("opentelemetry.trace.set_tracer_provider"),
+            patch("opentelemetry.sdk.trace.TracerProvider"),
+            patch("opentelemetry.sdk.resources.Resource.create", return_value=mock_resource),
+            patch.dict(sys.modules, {"opentelemetry.exporter.otlp.proto.grpc.exporter": mock_grpc_module}),
+        ):
             mock_otlp.return_value = Mock()
 
             # Note: the current implementation doesn't expose timeout parameter,

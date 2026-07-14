@@ -44,7 +44,8 @@ class TestPolicyMatcher:
         """Create a temporary directory with a test policy file."""
         self.tmpdir = Path(tempfile.mkdtemp())
         policy_file = self.tmpdir / "default.yaml"
-        policy_file.write_text("""
+        policy_file.write_text(
+            """
 rules:
   - id: pii-rule
     name: "Block PII"
@@ -60,10 +61,13 @@ rules:
     target_model: "llama-3.1-8b"
     priority: 5
     enabled: true
-""", encoding="utf-8")
+""",
+            encoding="utf-8",
+        )
 
     def teardown_method(self):
         import shutil
+
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_loads_policies(self):
@@ -75,9 +79,8 @@ rules:
     def test_route_matches_pii_rule(self):
         matcher = PolicyMatcher(policies_dir=str(self.tmpdir))
         import asyncio
-        result = asyncio.run(
-            matcher.route([{"role": "user", "content": "My email is test@example.com"}])
-        )
+
+        result = asyncio.run(matcher.route([{"role": "user", "content": "My email is test@example.com"}]))
         assert result.model_id == "gpt-4o"
         assert result.policy_matched == "pii-rule"
         assert result.strategy == "policy"
@@ -85,9 +88,8 @@ rules:
     def test_route_matches_general_rule(self):
         matcher = PolicyMatcher(policies_dir=str(self.tmpdir))
         import asyncio
-        result = asyncio.run(
-            matcher.route([{"role": "user", "content": "What is 2+2?"}])
-        )
+
+        result = asyncio.run(matcher.route([{"role": "user", "content": "What is 2+2?"}]))
         assert result.model_id == "llama-3.1-8b"
         assert result.strategy == "policy"
 
@@ -98,18 +100,19 @@ rules:
             policy_file.write_text("rules: []", encoding="utf-8")
             matcher = PolicyMatcher(policies_dir=str(self.tmpdir2))
             import asyncio
-            result = asyncio.run(
-                matcher.route([{"role": "user", "content": "Hello"}])
-            )
+
+            result = asyncio.run(matcher.route([{"role": "user", "content": "Hello"}]))
             assert result.model_id == "default"
             assert result.metadata.get("reason") == "no_match"
         finally:
             import shutil
+
             shutil.rmtree(self.tmpdir2, ignore_errors=True)
 
     def test_disabled_rules_ignored(self):
         policy_file = self.tmpdir / "default.yaml"
-        policy_file.write_text("""
+        policy_file.write_text(
+            """
 rules:
   - id: disabled-rule
     name: "Disabled"
@@ -124,7 +127,9 @@ rules:
     target_model: "llama"
     priority: 1
     enabled: true
-""", encoding="utf-8")
+""",
+            encoding="utf-8",
+        )
         matcher = PolicyMatcher(policies_dir=str(self.tmpdir))
         assert len(matcher.rules) == 1
         assert matcher.rules[0].id == "active-rule"
@@ -143,7 +148,6 @@ rules:
     def test_policy_matched_in_metadata(self):
         matcher = PolicyMatcher(policies_dir=str(self.tmpdir))
         import asyncio
-        result = asyncio.run(
-            matcher.route([{"role": "user", "content": "test@example.com"}])
-        )
+
+        result = asyncio.run(matcher.route([{"role": "user", "content": "test@example.com"}]))
         assert result.metadata.get("rule_name") == "Block PII"

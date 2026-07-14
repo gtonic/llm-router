@@ -18,26 +18,16 @@ class TestComplexityDetector:
     def test_code_request(self):
         content = "def hello(): print('world') "
         content += "please code something"
-        result = self.detector.analyze(
-            [{"role": "user", "content": content}]
-        )
+        result = self.detector.analyze([{"role": "user", "content": content}])
         assert result.level in ("low", "medium")
         assert "code_related" in result.factors
 
     def test_analysis_request(self):
-        result = self.detector.analyze(
-            [{"role": "user",
-              "content": "Please analyze and compare "
-              "these two approaches"}]
-        )
+        result = self.detector.analyze([{"role": "user", "content": "Please analyze and compare these two approaches"}])
         assert "analysis_related" in result.factors
 
     def test_creative_request(self):
-        result = self.detector.analyze(
-            [{"role": "user",
-              "content": "Write a creative story "
-              "about dragons"}]
-        )
+        result = self.detector.analyze([{"role": "user", "content": "Write a creative story about dragons"}])
         assert "creative_related" in result.factors
 
     def test_long_prompt(self):

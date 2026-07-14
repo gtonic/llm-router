@@ -35,6 +35,7 @@ class TestHybridPlan:
 class TestHybridRouter:
     def test_route_returns_first_step_model(self):
         import asyncio
+
         router = HybridRouter()
         result = asyncio.run(router.route([{"role": "user", "content": "Test"}]))
         assert result.model_id == "small_local"  # First step model
@@ -42,6 +43,7 @@ class TestHybridRouter:
 
     def test_route_contains_plan_metadata(self):
         import asyncio
+
         router = HybridRouter()
         result = asyncio.run(router.route([{"role": "user", "content": "Test"}]))
         plan = result.metadata.get("plan", [])

@@ -58,6 +58,7 @@ def _make_engine(**overrides):
 
 class _EngineBase:
     """Minimal object to hold the engine instance for attribute assignment."""
+
     pass
 
 
@@ -131,9 +132,7 @@ class TestGenerate:
 
     def _mock_rate_ok(self, engine):
         """Rate limiter that allows the request."""
-        engine.rate_limiter.check = AsyncMock(
-            return_value=MagicMock(allowed=True, remaining_requests=59)
-        )
+        engine.rate_limiter.check = AsyncMock(return_value=MagicMock(allowed=True, remaining_requests=59))
 
     def _mock_abuse_safe(self, engine):
         """Abuse filter that marks everything safe."""
@@ -152,9 +151,7 @@ class TestGenerate:
 
     def _mock_policy_route(self, engine, model_id="test-model"):
         """Policy matcher that routes to a given model."""
-        engine.policy_matcher.route = AsyncMock(
-            return_value=MagicMock(model_id=model_id, strategy="policy")
-        )
+        engine.policy_matcher.route = AsyncMock(return_value=MagicMock(model_id=model_id, strategy="policy"))
 
     def test_generate_success(self):
         engine = make_router()
@@ -164,9 +161,7 @@ class TestGenerate:
         self._mock_policy_route(engine)
         self._mock_backend_success(engine)
 
-        result = asyncio.run(
-            engine.generate([{"role": "user", "content": "Hello"}], user_id="u1")
-        )
+        result = asyncio.run(engine.generate([{"role": "user", "content": "Hello"}], user_id="u1"))
         assert result.content == "Hello world"
         assert result.model == "test-model"
         assert result.usage.total_tokens == 15
@@ -236,9 +231,7 @@ class TestGenerate:
         self._mock_abuse_safe(engine)
         self._mock_pii_no_pii(engine)
         self._mock_backend_success(engine)
-        engine.round_robin.route = AsyncMock(
-            return_value=MagicMock(model_id="rr-model", strategy="round_robin")
-        )
+        engine.round_robin.route = AsyncMock(return_value=MagicMock(model_id="rr-model", strategy="round_robin"))
 
         asyncio.run(engine.generate([{"role": "user", "content": "Hi"}]))
         engine.round_robin.route.assert_awaited_once()
@@ -251,9 +244,7 @@ class TestGenerate:
         self._mock_policy_route(engine, model_id="policy-model")
         self._mock_backend_success(engine)
 
-        asyncio.run(
-            engine.generate([{"role": "user", "content": "Hi"}], model="override-model")
-        )
+        asyncio.run(engine.generate([{"role": "user", "content": "Hi"}], model="override-model"))
         # Pool.get should be called with the explicit model, not the routed one
         engine.pool.get.assert_called_with("override-model")
 
@@ -281,9 +272,7 @@ class TestGenerate:
 
     def test_generate_raises_on_rate_limit(self):
         engine = make_router()
-        engine.rate_limiter.check = AsyncMock(
-            return_value=MagicMock(allowed=False, error="too many requests")
-        )
+        engine.rate_limiter.check = AsyncMock(return_value=MagicMock(allowed=False, error="too many requests"))
 
         with pytest.raises(Exception, match="Rate limited"):
             asyncio.run(engine.generate([{"role": "user", "content": "Hi"}]))
@@ -332,9 +321,7 @@ class TestGenerate:
         self._mock_pii_no_pii(engine)
         self._mock_policy_route(engine)
         expected_usage = UsageInfo(prompt_tokens=100, completion_tokens=50, total_tokens=150)
-        result = GenerateResult(
-            content="ok", model="m", usage=expected_usage, finish_reason="stop", latency_ms=50.0
-        )
+        result = GenerateResult(content="ok", model="m", usage=expected_usage, finish_reason="stop", latency_ms=50.0)
         engine.pool.get.return_value.generate = AsyncMock(return_value=result)
 
         gen = asyncio.run(engine.generate([{"role": "user", "content": "x"}]))
@@ -357,9 +344,7 @@ class TestGenerateStream:
         )
 
     def _mock_rate_ok(self, engine):
-        engine.rate_limiter.check = AsyncMock(
-            return_value=MagicMock(allowed=True, remaining_requests=59)
-        )
+        engine.rate_limiter.check = AsyncMock(return_value=MagicMock(allowed=True, remaining_requests=59))
 
     def _mock_abuse_safe(self, engine):
         result = MagicMock()
@@ -371,9 +356,7 @@ class TestGenerateStream:
         engine.pii_filter.check.return_value = MagicMock(has_pii=False, patterns=[])
 
     def _mock_policy_route(self, engine, model_id="test-model"):
-        engine.policy_matcher.route = AsyncMock(
-            return_value=MagicMock(model_id=model_id, strategy="policy")
-        )
+        engine.policy_matcher.route = AsyncMock(return_value=MagicMock(model_id=model_id, strategy="policy"))
 
     def test_stream_success(self):
         engine = make_router()
@@ -434,9 +417,7 @@ class TestGenerateStream:
 
     def test_stream_raises_on_rate_limit(self):
         engine = make_router()
-        engine.rate_limiter.check = AsyncMock(
-            return_value=MagicMock(allowed=False, error="blocked")
-        )
+        engine.rate_limiter.check = AsyncMock(return_value=MagicMock(allowed=False, error="blocked"))
 
         async def _collect():
             async for _ in engine.generate_stream([{"role": "user", "content": "hi"}]):
@@ -465,9 +446,7 @@ class TestGenerateStream:
         self._mock_rate_ok(engine)
         self._mock_abuse_safe(engine)
         self._mock_pii_no_pii(engine)
-        engine.policy_matcher.route = AsyncMock(
-            return_value=MagicMock(model_id="policy-model")
-        )
+        engine.policy_matcher.route = AsyncMock(return_value=MagicMock(model_id="policy-model"))
 
         async def _stream_gen(messages):
             yield self._stream_result("ok", model="explicit")
@@ -475,9 +454,7 @@ class TestGenerateStream:
         engine.pool.get.return_value.generate_stream = _stream_gen
 
         async def _collect():
-            async for _chunk in engine.generate_stream(
-                [{"role": "user", "content": "hi"}], model="explicit"
-            ):
+            async for _chunk in engine.generate_stream([{"role": "user", "content": "hi"}], model="explicit"):
                 pass
 
         asyncio.run(_collect())
@@ -507,9 +484,7 @@ class TestGenerateStream:
         self._mock_rate_ok(engine)
         self._mock_abuse_safe(engine)
         self._mock_pii_no_pii(engine)
-        engine.complexity_detector.route = AsyncMock(
-            return_value=MagicMock(model_id="cx", strategy="complexity")
-        )
+        engine.complexity_detector.route = AsyncMock(return_value=MagicMock(model_id="cx", strategy="complexity"))
 
         async def _stream_gen(messages):
             yield self._stream_result("ok", "cx")
@@ -552,9 +527,7 @@ class TestGenerateStream:
         self._mock_rate_ok(engine)
         self._mock_abuse_safe(engine)
         self._mock_pii_no_pii(engine)
-        engine.round_robin.route = AsyncMock(
-            return_value=MagicMock(model_id="rr-model", strategy="round_robin")
-        )
+        engine.round_robin.route = AsyncMock(return_value=MagicMock(model_id="rr-model", strategy="round_robin"))
 
         async def _stream_gen(messages):
             yield self._stream_result("ok", model="rr-model")
@@ -588,75 +561,61 @@ class TestRouterStrategyRouting:
 
     def _ready(self, engine):
         """Mock all dependencies for a successful call."""
-        engine.rate_limiter.check = AsyncMock(
-            return_value=MagicMock(allowed=True, remaining_requests=59)
-        )
+        engine.rate_limiter.check = AsyncMock(return_value=MagicMock(allowed=True, remaining_requests=59))
         engine.abuse_filter.check.return_value = MagicMock(safe=True, categories=[], abuse_score=0)
         engine.pii_filter.check.return_value = MagicMock(has_pii=False, patterns=[])
         result = GenerateResult(
-            content="ok", model="m",
+            content="ok",
+            model="m",
             usage=UsageInfo(prompt_tokens=1, completion_tokens=1, total_tokens=2),
-            finish_reason="stop", latency_ms=1.0,
+            finish_reason="stop",
+            latency_ms=1.0,
         )
         engine.pool.get.return_value.generate = AsyncMock(return_value=result)
         return engine
 
     def _stream_ready(self, engine):
         """Mock all dependencies for a successful stream call."""
-        engine.rate_limiter.check = AsyncMock(
-            return_value=MagicMock(allowed=True, remaining_requests=59)
-        )
+        engine.rate_limiter.check = AsyncMock(return_value=MagicMock(allowed=True, remaining_requests=59))
         engine.abuse_filter.check.return_value = MagicMock(safe=True, categories=[])
         engine.pii_filter.check.return_value = MagicMock(has_pii=False, patterns=[])
         return engine
 
     def test_policy_strategy_routes_through_matcher(self):
         engine = self._ready(make_router(routing_strategy=RoutingStrategy.POLICY))
-        engine.policy_matcher.route = AsyncMock(
-            return_value=MagicMock(model_id="pm", strategy="policy")
-        )
+        engine.policy_matcher.route = AsyncMock(return_value=MagicMock(model_id="pm", strategy="policy"))
         asyncio.run(engine.generate([{"role": "user", "content": "hi"}]))
         engine.policy_matcher.route.assert_awaited_once()
 
     def test_complexity_strategy_routes_through_detector(self):
         engine = self._ready(make_router(routing_strategy=RoutingStrategy.COMPLEXITY))
-        engine.complexity_detector.route = AsyncMock(
-            return_value=MagicMock(model_id="cx", strategy="complexity")
-        )
+        engine.complexity_detector.route = AsyncMock(return_value=MagicMock(model_id="cx", strategy="complexity"))
         asyncio.run(engine.generate([{"role": "user", "content": "hi"}]))
         engine.complexity_detector.route.assert_awaited_once()
         engine.policy_matcher.route.assert_not_called()
 
     def test_round_robin_strategy_routes_through_rr(self):
         engine = self._ready(make_router(routing_strategy=RoutingStrategy.ROUND_ROBIN))
-        engine.round_robin.route = AsyncMock(
-            return_value=MagicMock(model_id="rr", strategy="round_robin")
-        )
+        engine.round_robin.route = AsyncMock(return_value=MagicMock(model_id="rr", strategy="round_robin"))
         asyncio.run(engine.generate([{"role": "user", "content": "hi"}]))
         engine.round_robin.route.assert_awaited_once()
         engine.policy_matcher.route.assert_not_called()
 
     def test_hybrid_strategy_falls_back_to_policy_matcher(self):
         engine = self._ready(make_router(routing_strategy=RoutingStrategy.HYBRID))
-        engine.policy_matcher.route = AsyncMock(
-            return_value=MagicMock(model_id="hm", strategy="hybrid")
-        )
+        engine.policy_matcher.route = AsyncMock(return_value=MagicMock(model_id="hm", strategy="hybrid"))
         asyncio.run(engine.generate([{"role": "user", "content": "hi"}]))
         engine.policy_matcher.route.assert_awaited_once()
 
     def test_latency_strategy_falls_back_to_policy_matcher(self):
         engine = self._ready(make_router(routing_strategy=RoutingStrategy.LATENCY))
-        engine.policy_matcher.route = AsyncMock(
-            return_value=MagicMock(model_id="lm", strategy="latency")
-        )
+        engine.policy_matcher.route = AsyncMock(return_value=MagicMock(model_id="lm", strategy="latency"))
         asyncio.run(engine.generate([{"role": "user", "content": "hi"}]))
         engine.policy_matcher.route.assert_awaited_once()
 
     def test_cost_strategy_falls_back_to_policy_matcher(self):
         engine = self._ready(make_router(routing_strategy=RoutingStrategy.COST))
-        engine.policy_matcher.route = AsyncMock(
-            return_value=MagicMock(model_id="cm", strategy="cost")
-        )
+        engine.policy_matcher.route = AsyncMock(return_value=MagicMock(model_id="cm", strategy="cost"))
         asyncio.run(engine.generate([{"role": "user", "content": "hi"}]))
         engine.policy_matcher.route.assert_awaited_once()
 
@@ -667,19 +626,17 @@ class TestRouterStrategyRouting:
 class TestEdgeCases:
     def test_generate_with_empty_messages(self):
         engine = make_router()
-        engine.rate_limiter.check = AsyncMock(
-            return_value=MagicMock(allowed=True, remaining_requests=59)
-        )
+        engine.rate_limiter.check = AsyncMock(return_value=MagicMock(allowed=True, remaining_requests=59))
         engine.abuse_filter.check.return_value = MagicMock(safe=True, categories=[], abuse_score=0)
         engine.pii_filter.check.return_value = MagicMock(has_pii=False, patterns=[])
-        engine.policy_matcher.route = AsyncMock(
-            return_value=MagicMock(model_id="empty-model", strategy="policy")
-        )
+        engine.policy_matcher.route = AsyncMock(return_value=MagicMock(model_id="empty-model", strategy="policy"))
         engine.pool.get.return_value.generate = AsyncMock(
             return_value=GenerateResult(
-                content="", model="empty",
+                content="",
+                model="empty",
                 usage=UsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0),
-                finish_reason="stop", latency_ms=0.0,
+                finish_reason="stop",
+                latency_ms=0.0,
             )
         )
         result = asyncio.run(engine.generate([]))
@@ -688,19 +645,17 @@ class TestEdgeCases:
 
     def test_generate_with_user_id_none(self):
         engine = make_router()
-        engine.rate_limiter.check = AsyncMock(
-            return_value=MagicMock(allowed=True, remaining_requests=59)
-        )
+        engine.rate_limiter.check = AsyncMock(return_value=MagicMock(allowed=True, remaining_requests=59))
         engine.abuse_filter.check.return_value = MagicMock(safe=True, categories=[], abuse_score=0)
         engine.pii_filter.check.return_value = MagicMock(has_pii=False, patterns=[])
-        engine.policy_matcher.route = AsyncMock(
-            return_value=MagicMock(model_id="m", strategy="policy")
-        )
+        engine.policy_matcher.route = AsyncMock(return_value=MagicMock(model_id="m", strategy="policy"))
         engine.pool.get.return_value.generate = AsyncMock(
             return_value=GenerateResult(
-                content="x", model="m",
+                content="x",
+                model="m",
                 usage=UsageInfo(prompt_tokens=1, completion_tokens=1, total_tokens=2),
-                finish_reason="stop", latency_ms=1.0,
+                finish_reason="stop",
+                latency_ms=1.0,
             )
         )
         result = asyncio.run(engine.generate([{"role": "user", "content": "hi"}], user_id=None))
@@ -709,19 +664,17 @@ class TestEdgeCases:
     def test_generate_with_api_key_ignored_in_request_id(self):
         """API key is accepted as parameter but not used in request ID construction."""
         engine = make_router()
-        engine.rate_limiter.check = AsyncMock(
-            return_value=MagicMock(allowed=True, remaining_requests=59)
-        )
+        engine.rate_limiter.check = AsyncMock(return_value=MagicMock(allowed=True, remaining_requests=59))
         engine.abuse_filter.check.return_value = MagicMock(safe=True, categories=[], abuse_score=0)
         engine.pii_filter.check.return_value = MagicMock(has_pii=False, patterns=[])
-        engine.policy_matcher.route = AsyncMock(
-            return_value=MagicMock(model_id="m", strategy="policy")
-        )
+        engine.policy_matcher.route = AsyncMock(return_value=MagicMock(model_id="m", strategy="policy"))
         engine.pool.get.return_value.generate = AsyncMock(
             return_value=GenerateResult(
-                content="x", model="m",
+                content="x",
+                model="m",
                 usage=UsageInfo(prompt_tokens=1, completion_tokens=1, total_tokens=2),
-                finish_reason="stop", latency_ms=1.0,
+                finish_reason="stop",
+                latency_ms=1.0,
             )
         )
         asyncio.run(engine.generate([{"role": "user", "content": "hi"}], user_id="u1", api_key="sk-xxx"))
@@ -729,28 +682,24 @@ class TestEdgeCases:
 
     def test_generate_stream_with_explicit_model_uses_it(self):
         engine = make_router()
-        engine.rate_limiter.check = AsyncMock(
-            return_value=MagicMock(allowed=True, remaining_requests=59)
-        )
+        engine.rate_limiter.check = AsyncMock(return_value=MagicMock(allowed=True, remaining_requests=59))
         engine.abuse_filter.check.return_value = MagicMock(safe=True, categories=[])
         engine.pii_filter.check.return_value = MagicMock(has_pii=False, patterns=[])
-        engine.policy_matcher.route = AsyncMock(
-            return_value=MagicMock(model_id="routed")
-        )
+        engine.policy_matcher.route = AsyncMock(return_value=MagicMock(model_id="routed"))
 
         async def _stream(messages):
             yield GenerateResult(
-                content="streamed", model="explicit-model",
+                content="streamed",
+                model="explicit-model",
                 usage=UsageInfo(prompt_tokens=1, completion_tokens=8, total_tokens=9),
-                finish_reason="stop", latency_ms=5.0,
+                finish_reason="stop",
+                latency_ms=5.0,
             )
 
         engine.pool.get.return_value.generate_stream = _stream
 
         async def _collect():
-            async for chunk in engine.generate_stream(
-                [{"role": "user", "content": "hi"}], model="explicit-model"
-            ):
+            async for chunk in engine.generate_stream([{"role": "user", "content": "hi"}], model="explicit-model"):
                 return chunk
 
         result = asyncio.run(_collect())
@@ -764,21 +713,17 @@ class TestPIIDetectedLog:
     def test_generate_logs_pii_detected_when_pii_found(self):
         """When PII is detected, the router logs an info message."""
         engine = make_router()
-        engine.rate_limiter.check = AsyncMock(
-            return_value=MagicMock(allowed=True, remaining_requests=59)
-        )
+        engine.rate_limiter.check = AsyncMock(return_value=MagicMock(allowed=True, remaining_requests=59))
         engine.abuse_filter.check.return_value = MagicMock(safe=True, categories=[])
-        engine.pii_filter.check = MagicMock(
-            return_value=MagicMock(has_pii=True, patterns=["email"])
-        )
-        engine.policy_matcher.route = AsyncMock(
-            return_value=MagicMock(model_id="m", strategy="policy")
-        )
+        engine.pii_filter.check = MagicMock(return_value=MagicMock(has_pii=True, patterns=["email"]))
+        engine.policy_matcher.route = AsyncMock(return_value=MagicMock(model_id="m", strategy="policy"))
         engine.pool.get.return_value.generate = AsyncMock(
             return_value=GenerateResult(
-                content="ok", model="m",
+                content="ok",
+                model="m",
                 usage=UsageInfo(prompt_tokens=1, completion_tokens=1, total_tokens=2),
-                finish_reason="stop", latency_ms=1.0,
+                finish_reason="stop",
+                latency_ms=1.0,
             )
         )
 
@@ -797,14 +742,10 @@ class TestModelCallFailure:
     def test_generate_raises_on_model_call_error(self):
         """When the backend raises, the error is logged and re-raised."""
         engine = make_router()
-        engine.rate_limiter.check = AsyncMock(
-            return_value=MagicMock(allowed=True, remaining_requests=59)
-        )
+        engine.rate_limiter.check = AsyncMock(return_value=MagicMock(allowed=True, remaining_requests=59))
         engine.abuse_filter.check.return_value = MagicMock(safe=True, categories=[])
         engine.pii_filter.check.return_value = MagicMock(has_pii=False, patterns=[])
-        engine.policy_matcher.route = AsyncMock(
-            return_value=MagicMock(model_id="m", strategy="policy")
-        )
+        engine.policy_matcher.route = AsyncMock(return_value=MagicMock(model_id="m", strategy="policy"))
         engine.pool.get.return_value.generate = AsyncMock(side_effect=RuntimeError("connection refused"))
 
         with pytest.raises(RuntimeError, match="connection refused"):
@@ -818,20 +759,18 @@ class TestStreamFallbackStrategies:
     def test_stream_hybrid_strategy_calls_policy_matcher(self):
         """HYBRID strategy falls through to policy matcher in generate_stream."""
         engine = make_router(routing_strategy=RoutingStrategy.HYBRID)
-        engine.rate_limiter.check = AsyncMock(
-            return_value=MagicMock(allowed=True, remaining_requests=59)
-        )
+        engine.rate_limiter.check = AsyncMock(return_value=MagicMock(allowed=True, remaining_requests=59))
         engine.abuse_filter.check.return_value = MagicMock(safe=True, categories=[])
         engine.pii_filter.check.return_value = MagicMock(has_pii=False, patterns=[])
-        engine.policy_matcher.route = AsyncMock(
-            return_value=MagicMock(model_id="hybrid-model", strategy="policy")
-        )
+        engine.policy_matcher.route = AsyncMock(return_value=MagicMock(model_id="hybrid-model", strategy="policy"))
 
         async def _stream_gen(messages):
             yield GenerateResult(
-                content="ok", model="hybrid-model",
+                content="ok",
+                model="hybrid-model",
                 usage=UsageInfo(prompt_tokens=1, completion_tokens=2, total_tokens=3),
-                finish_reason="stop", latency_ms=5.0,
+                finish_reason="stop",
+                latency_ms=5.0,
             )
 
         engine.pool.get.return_value.generate_stream = _stream_gen
@@ -851,20 +790,18 @@ class TestStreamFallbackStrategies:
     def test_stream_latency_strategy_calls_policy_matcher(self):
         """LATENCY strategy falls through to policy matcher in generate_stream."""
         engine = make_router(routing_strategy=RoutingStrategy.LATENCY)
-        engine.rate_limiter.check = AsyncMock(
-            return_value=MagicMock(allowed=True, remaining_requests=59)
-        )
+        engine.rate_limiter.check = AsyncMock(return_value=MagicMock(allowed=True, remaining_requests=59))
         engine.abuse_filter.check.return_value = MagicMock(safe=True, categories=[])
         engine.pii_filter.check.return_value = MagicMock(has_pii=False, patterns=[])
-        engine.policy_matcher.route = AsyncMock(
-            return_value=MagicMock(model_id="latency-model", strategy="latency")
-        )
+        engine.policy_matcher.route = AsyncMock(return_value=MagicMock(model_id="latency-model", strategy="latency"))
 
         async def _stream_gen(messages):
             yield GenerateResult(
-                content="ok", model="latency-model",
+                content="ok",
+                model="latency-model",
                 usage=UsageInfo(prompt_tokens=1, completion_tokens=2, total_tokens=3),
-                finish_reason="stop", latency_ms=5.0,
+                finish_reason="stop",
+                latency_ms=5.0,
             )
 
         engine.pool.get.return_value.generate_stream = _stream_gen
@@ -882,20 +819,18 @@ class TestStreamFallbackStrategies:
     def test_stream_cost_strategy_calls_policy_matcher(self):
         """COST strategy falls through to policy matcher in generate_stream."""
         engine = make_router(routing_strategy=RoutingStrategy.COST)
-        engine.rate_limiter.check = AsyncMock(
-            return_value=MagicMock(allowed=True, remaining_requests=59)
-        )
+        engine.rate_limiter.check = AsyncMock(return_value=MagicMock(allowed=True, remaining_requests=59))
         engine.abuse_filter.check.return_value = MagicMock(safe=True, categories=[])
         engine.pii_filter.check.return_value = MagicMock(has_pii=False, patterns=[])
-        engine.policy_matcher.route = AsyncMock(
-            return_value=MagicMock(model_id="cost-model", strategy="cost")
-        )
+        engine.policy_matcher.route = AsyncMock(return_value=MagicMock(model_id="cost-model", strategy="cost"))
 
         async def _stream_gen(messages):
             yield GenerateResult(
-                content="ok", model="cost-model",
+                content="ok",
+                model="cost-model",
                 usage=UsageInfo(prompt_tokens=1, completion_tokens=2, total_tokens=3),
-                finish_reason="stop", latency_ms=5.0,
+                finish_reason="stop",
+                latency_ms=5.0,
             )
 
         engine.pool.get.return_value.generate_stream = _stream_gen
@@ -917,8 +852,10 @@ class TestStreamFallbackStrategies:
 class TestImports:
     def test_router_module_importable(self):
         from llm_router import router  # noqa: F401
+
         assert hasattr(router, "RouterPolicyEngine")
 
     def test_router_exports_engine_class(self):
         from llm_router.router import RouterPolicyEngine as RPE  # noqa: N817
+
         assert RPE is not None

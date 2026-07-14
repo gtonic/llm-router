@@ -61,9 +61,7 @@ def make_test_client():
         return m
 
     policy_matcher.route = AsyncMock(side_effect=lambda *a, **kw: _make_route())
-    complexity_detector.analyze = MagicMock(
-        return_value=MagicMock(level="low", score=0.1, factors=["simple"])
-    )
+    complexity_detector.analyze = MagicMock(return_value=MagicMock(level="low", score=0.1, factors=["simple"]))
     hybrid_router.route = MagicMock(return_value=_make_route(strategy="hybrid"))
     round_robin.route = MagicMock(return_value=_make_route(strategy="round_robin"))
 
@@ -428,9 +426,7 @@ class TestGuardrailCheckEndpoint:
 
     def test_check_pii_mode(self):
         client = make_test_client()
-        resp = self._post_check(
-            client, mode="pii", text="My email is test@example.com"
-        )
+        resp = self._post_check(client, mode="pii", text="My email is test@example.com")
         assert resp.status_code == 200
         data = resp.json()
         assert "has_pii" in data or "safe" in data
@@ -465,9 +461,7 @@ class TestGuardrailCheckEndpoint:
     def test_check_missing_text(self):
         """Missing text field should be handled gracefully."""
         client = make_test_client()
-        resp = client.post(
-            "/v1/guardrails/check", json={"mode": "pii"}
-        )
+        resp = client.post("/v1/guardrails/check", json={"mode": "pii"})
         assert resp.status_code == 200
 
 
@@ -503,9 +497,7 @@ class TestAdminReloadEndpoint:
         import llm_router.server.app as app_mod
 
         original = app_mod.router_engine.policy_matcher._load_policies
-        app_mod.router_engine.policy_matcher._load_policies = MagicMock(
-            side_effect=RuntimeError("config load failed")
-        )
+        app_mod.router_engine.policy_matcher._load_policies = MagicMock(side_effect=RuntimeError("config load failed"))
 
         try:
             resp = self._post_reload(client)
