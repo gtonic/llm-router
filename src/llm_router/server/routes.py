@@ -10,6 +10,8 @@ import time
 import uuid
 from collections.abc import AsyncGenerator
 
+from llm_router.pool.base import GenerateResult
+
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
@@ -21,6 +23,7 @@ from llm_router.models import (
     MessageRole,
     ModelInfo,
     ModelListResponse,
+    UsageInfo as ModelsUsageInfo,
 )
 
 logger = logging.getLogger("llm-router")
@@ -47,7 +50,7 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
         try:
             start = time.perf_counter()
             result = await router_engine.generate(
-                messages=body.model_dump(),
+                messages=body.model_dump()["messages"],
                 user_id=body.user_id,
                 api_key=body.api_key,
                 model=body.model,
@@ -67,7 +70,11 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
                         "finish_reason": result.finish_reason,
                     }
                 ],
-                usage=result.usage,
+                usage=ModelsUsageInfo(
+                    prompt_tokens=result.usage.prompt_tokens,
+                    completion_tokens=result.usage.completion_tokens,
+                    total_tokens=result.usage.total_tokens,
+                ),
             )
             response.usage.cost = 0.0  # Will be set by router
             logger.info("[%s] %s %s %.1fms model=%s", request_id, request.client.host, "OK", elapsed_ms, result.model)
@@ -81,7 +88,7 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
     async def event_generator() -> AsyncGenerator[str, None]:
         try:
             async for chunk in router_engine.generate_stream(
-                messages=body.model_dump(),
+                messages=body.model_dump()["messages"],
                 user_id=body.user_id,
                 api_key=body.api_key,
                 model=body.model,

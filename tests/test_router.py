@@ -546,6 +546,31 @@ class TestGenerateStream:
         chunks = asyncio.run(_collect())
         assert chunks == []
 
+    def test_stream_calls_round_robin_strategy(self):
+        """ROUND_ROBIN strategy should call round_robin.route in generate_stream."""
+        engine = make_router(routing_strategy=RoutingStrategy.ROUND_ROBIN)
+        self._mock_rate_ok(engine)
+        self._mock_abuse_safe(engine)
+        self._mock_pii_no_pii(engine)
+        engine.round_robin.route = AsyncMock(
+            return_value=MagicMock(model_id="rr-model", strategy="round_robin")
+        )
+
+        async def _stream_gen(messages):
+            yield self._stream_result("ok", model="rr-model")
+
+        engine.pool.get.return_value.generate_stream = _stream_gen
+
+        async def _collect():
+            chunks = []
+            async for chunk in engine.generate_stream([{"role": "user", "content": "hi"}]):
+                chunks.append(chunk)
+            return chunks
+
+        chunks = asyncio.run(_collect())
+        assert len(chunks) == 1
+        engine.round_robin.route.assert_awaited_once()
+
     @staticmethod
     async def _consume_stream(engine):
         """Consume stream chunks into a list."""
@@ -730,6 +755,160 @@ class TestEdgeCases:
 
         result = asyncio.run(_collect())
         assert result.model == "explicit-model"
+
+
+# ── Edge case: PII detected logging ─────────────────────────────────
+
+
+class TestPIIDetectedLog:
+    def test_generate_logs_pii_detected_when_pii_found(self):
+        """When PII is detected, the router logs an info message."""
+        engine = make_router()
+        engine.rate_limiter.check = AsyncMock(
+            return_value=MagicMock(allowed=True, remaining_requests=59)
+        )
+        engine.abuse_filter.check.return_value = MagicMock(safe=True, categories=[])
+        engine.pii_filter.check = MagicMock(
+            return_value=MagicMock(has_pii=True, patterns=["email"])
+        )
+        engine.policy_matcher.route = AsyncMock(
+            return_value=MagicMock(model_id="m", strategy="policy")
+        )
+        engine.pool.get.return_value.generate = AsyncMock(
+            return_value=GenerateResult(
+                content="ok", model="m",
+                usage=UsageInfo(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+                finish_reason="stop", latency_ms=1.0,
+            )
+        )
+
+        result = asyncio.run(engine.generate([{"role": "user", "content": "test@test.com"}]))
+        assert result.content == "ok"
+        # Verify PII check was called with the full text
+        engine.pii_filter.check.assert_called()
+        call_arg = engine.pii_filter.check.call_args[0][0]
+        assert "test@test.com" in call_arg
+
+
+# ── Edge case: model call failure ─────────────────────────────────────
+
+
+class TestModelCallFailure:
+    def test_generate_raises_on_model_call_error(self):
+        """When the backend raises, the error is logged and re-raised."""
+        engine = make_router()
+        engine.rate_limiter.check = AsyncMock(
+            return_value=MagicMock(allowed=True, remaining_requests=59)
+        )
+        engine.abuse_filter.check.return_value = MagicMock(safe=True, categories=[])
+        engine.pii_filter.check.return_value = MagicMock(has_pii=False, patterns=[])
+        engine.policy_matcher.route = AsyncMock(
+            return_value=MagicMock(model_id="m", strategy="policy")
+        )
+        engine.pool.get.return_value.generate = AsyncMock(side_effect=RuntimeError("connection refused"))
+
+        with pytest.raises(RuntimeError, match="connection refused"):
+            asyncio.run(engine.generate([{"role": "user", "content": "hi"}]))
+
+
+# ── Edge case: generate_stream fallback strategies ────────────────────
+
+
+class TestStreamFallbackStrategies:
+    def test_stream_hybrid_strategy_calls_policy_matcher(self):
+        """HYBRID strategy falls through to policy matcher in generate_stream."""
+        engine = make_router(routing_strategy=RoutingStrategy.HYBRID)
+        engine.rate_limiter.check = AsyncMock(
+            return_value=MagicMock(allowed=True, remaining_requests=59)
+        )
+        engine.abuse_filter.check.return_value = MagicMock(safe=True, categories=[])
+        engine.pii_filter.check.return_value = MagicMock(has_pii=False, patterns=[])
+        engine.policy_matcher.route = AsyncMock(
+            return_value=MagicMock(model_id="hybrid-model", strategy="policy")
+        )
+
+        async def _stream_gen(messages):
+            yield GenerateResult(
+                content="ok", model="hybrid-model",
+                usage=UsageInfo(prompt_tokens=1, completion_tokens=2, total_tokens=3),
+                finish_reason="stop", latency_ms=5.0,
+            )
+
+        engine.pool.get.return_value.generate_stream = _stream_gen
+
+        async def _collect():
+            chunks = []
+            async for chunk in engine.generate_stream([{"role": "user", "content": "hi"}]):
+                chunks.append(chunk)
+            return chunks
+
+        chunks = asyncio.run(_collect())
+        assert len(chunks) == 1
+        assert chunks[0].model == "hybrid-model"
+        # policy_matcher.route should be called (fallback)
+        engine.policy_matcher.route.assert_awaited_once()
+
+    def test_stream_latency_strategy_calls_policy_matcher(self):
+        """LATENCY strategy falls through to policy matcher in generate_stream."""
+        engine = make_router(routing_strategy=RoutingStrategy.LATENCY)
+        engine.rate_limiter.check = AsyncMock(
+            return_value=MagicMock(allowed=True, remaining_requests=59)
+        )
+        engine.abuse_filter.check.return_value = MagicMock(safe=True, categories=[])
+        engine.pii_filter.check.return_value = MagicMock(has_pii=False, patterns=[])
+        engine.policy_matcher.route = AsyncMock(
+            return_value=MagicMock(model_id="latency-model", strategy="latency")
+        )
+
+        async def _stream_gen(messages):
+            yield GenerateResult(
+                content="ok", model="latency-model",
+                usage=UsageInfo(prompt_tokens=1, completion_tokens=2, total_tokens=3),
+                finish_reason="stop", latency_ms=5.0,
+            )
+
+        engine.pool.get.return_value.generate_stream = _stream_gen
+
+        async def _collect():
+            chunks = []
+            async for chunk in engine.generate_stream([{"role": "user", "content": "hi"}]):
+                chunks.append(chunk)
+            return chunks
+
+        chunks = asyncio.run(_collect())
+        assert chunks[0].model == "latency-model"
+        engine.policy_matcher.route.assert_awaited_once()
+
+    def test_stream_cost_strategy_calls_policy_matcher(self):
+        """COST strategy falls through to policy matcher in generate_stream."""
+        engine = make_router(routing_strategy=RoutingStrategy.COST)
+        engine.rate_limiter.check = AsyncMock(
+            return_value=MagicMock(allowed=True, remaining_requests=59)
+        )
+        engine.abuse_filter.check.return_value = MagicMock(safe=True, categories=[])
+        engine.pii_filter.check.return_value = MagicMock(has_pii=False, patterns=[])
+        engine.policy_matcher.route = AsyncMock(
+            return_value=MagicMock(model_id="cost-model", strategy="cost")
+        )
+
+        async def _stream_gen(messages):
+            yield GenerateResult(
+                content="ok", model="cost-model",
+                usage=UsageInfo(prompt_tokens=1, completion_tokens=2, total_tokens=3),
+                finish_reason="stop", latency_ms=5.0,
+            )
+
+        engine.pool.get.return_value.generate_stream = _stream_gen
+
+        async def _collect():
+            chunks = []
+            async for chunk in engine.generate_stream([{"role": "user", "content": "hi"}]):
+                chunks.append(chunk)
+            return chunks
+
+        chunks = asyncio.run(_collect())
+        assert chunks[0].model == "cost-model"
+        engine.policy_matcher.route.assert_awaited_once()
 
 
 # ── Import test ──────────────────────────────────────────────────────

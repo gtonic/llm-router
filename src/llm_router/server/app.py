@@ -49,7 +49,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Loaded models: %s", model_pool.list_models())
 
     # Initialize guardrails
-    rate_limiter = RateLimiter(rpm=settings.rate_limit_rpm, tpm=settings.rate_limit_ppm)
+    rate_limiter = RateLimiter(rpm=settings.rate_limit_rpm, tpm=settings.rate_limit_tpm)
     pii_filter = PiiFilter(redact=settings.pii_redact)
     abuse_filter = AbuseFilter()
     content_safety = ContentSafety()
