@@ -40,6 +40,9 @@ ENV/
 .env.local
 .env.*.local
 
+# Runtime-generated model profiles may contain resolved provider credentials.
+profiles/models.yaml
+
 # Logs
 logs/
 *.log

@@ -253,9 +253,20 @@ class TestGatewaySettings:
         assert loaded[0].id == "x"
 
     def test_save_and_load_models(self, tmp_path: Path):
-        models = [ModelBackendConfig(id="s", name="S", type="remote", base_url="http://s")]
+        models = [
+            ModelBackendConfig(
+                id="s",
+                name="S",
+                type="remote",
+                base_url="https://api.openai.com/v1",
+                api_key="sk-test-secret",
+            )
+        ]
         gs = GatewaySettings(models_dir=str(tmp_path))
         gs.save_models_to_yaml(models)
+        saved = (tmp_path / "models.yaml").read_text(encoding="utf-8")
+        assert "sk-test-secret" not in saved
+        assert "${OPENAI_API_KEY}" in saved
         loaded = gs.load_models_from_yaml()
         assert len(loaded) == 1
         assert loaded[0].id == "s"

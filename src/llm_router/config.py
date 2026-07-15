@@ -343,8 +343,14 @@ class GatewaySettings(BaseSettings):
         """Write the full model list back to ``profiles/models.yaml``."""
         path = Path(path) if path else Path(self.models_dir, "models.yaml")
         path.parent.mkdir(parents=True, exist_ok=True)
+        serialised_models = []
+        for model in models:
+            model_data = model.to_dict()
+            if model.is_remote and "api.openai.com" in model.base_url and model.api_key:
+                model_data["api_key"] = "${OPENAI_API_KEY}"
+            serialised_models.append(model_data)
         with open(path, "w", encoding="utf-8") as fh:
-            yaml.dump([m.to_dict() for m in models], fh, default_flow_style=False, sort_keys=False)
+            yaml.dump(serialised_models, fh, default_flow_style=False, sort_keys=False)
         return path
 
     def save_runtime_config(self, path: str | Path | None = None) -> Path:
