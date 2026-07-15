@@ -26,6 +26,7 @@ RUN pip install --no-compile --upgrade pip && \
 # Copy source and run (optional) tests
 COPY src/ src/
 COPY tests/ tests/
+ENV PYTHONPATH=/build/src
 RUN python -m pytest tests/ -q --tb=short
 
 # ── 2. Production stage ────────────────────────────────────────────
