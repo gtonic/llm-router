@@ -156,6 +156,30 @@ class SystemManifest:
                 "description": "Allowed lifecycle actions",
                 "auth": None,
             },
+            {
+                "path": "/admin/models",
+                "method": "GET|POST",
+                "description": "List or create model backends",
+                "auth": "admin",
+            },
+            {
+                "path": "/admin/models/{model_id}",
+                "method": "GET|PUT|DELETE",
+                "description": "Inspect, update, or remove a model backend",
+                "auth": "admin",
+            },
+            {
+                "path": "/admin/guardrails",
+                "method": "GET|PUT",
+                "description": "Inspect or update runtime guardrails",
+                "auth": "admin",
+            },
+            {
+                "path": "/admin/rollback",
+                "method": "POST",
+                "description": "Restore the previous runtime configuration snapshot",
+                "auth": "admin",
+            },
         ]
     )
 
@@ -329,6 +353,12 @@ class SystemManifest:
                 "type": "gauge",
                 "description": "Number of active requests",
                 "labels": [],
+            },
+            {
+                "name": "llm_router_admin_actions_total",
+                "type": "counter",
+                "description": "Runtime administration actions",
+                "labels": ["action", "status"],
             },
         ]
     )

@@ -59,9 +59,8 @@ class ModelPool:
             # Substitute environment variables in the config
             resolved = _substitute_env_vars(cfg_dict)
             cfg = ModelBackendConfig(**resolved)
-            if cfg.enabled:
-                backend = self._create_backend(cfg)
-                self._backends[cfg.id] = backend
+            backend = self._create_backend(cfg)
+            self._backends[cfg.id] = backend
 
     @staticmethod
     def _create_backend(cfg: ModelBackendConfig) -> ModelBackend:
@@ -78,17 +77,30 @@ class ModelPool:
 
     def get(self, model_id: str) -> ModelBackend:
         """Get a backend by its model ID."""
-        if model_id not in self._backends:
-            raise KeyError(f"Model '{model_id}' not found in pool. Available: {list(self._backends.keys())}")
-        return self._backends[model_id]
+        backend = self._backends.get(model_id)
+        if backend is None or not backend.config.enabled:
+            raise KeyError(f"Model '{model_id}' not found or disabled. Available: {self.list_models()}")
+        return backend
 
     def get_or_default(self, model_id: str, default_id: str = "llama-local") -> ModelBackend:
         """Get backend by ID or fall back to default."""
-        return self._backends.get(model_id, self._backends.get(default_id))
+        requested = self._backends.get(model_id)
+        if requested is not None and requested.config.enabled:
+            return requested
+        default = self._backends.get(default_id)
+        return default if default is not None and default.config.enabled else None
 
     def list_models(self) -> list[str]:
         """Return all available model IDs."""
-        return list(self._backends.keys())
+        return [model_id for model_id, backend in self._backends.items() if backend.config.enabled]
+
+    def list_all_models(self) -> list[str]:
+        """Return all backend IDs, including disabled configurations."""
+        return list(self._backends)
+
+    def replace_backend(self, config: ModelBackendConfig) -> None:
+        """Rebuild and replace a backend after connection settings change."""
+        self._backends[config.id] = self._create_backend(config)
 
     async def health_check_all(self) -> dict[str, HealthStatus]:
         """Run health checks on all backends in parallel."""

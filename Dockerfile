@@ -44,6 +44,9 @@ ENV PATH="/app/venv/bin:$PATH"
 COPY --from=builder /build/src /app/src
 COPY --from=builder /build/pyproject.toml /app/
 
+# Source files must remain readable after dropping privileges to appuser.
+RUN chmod -R a+rX /app/src
+
 # Make llm_router importable (entry points expect it on PYTHONPATH)
 ENV PYTHONPATH=/app/src
 ENV PATH=/app:$PATH

@@ -71,8 +71,17 @@ class PiiFilter:
         "adhs",
     ]
 
-    def __init__(self, redact: bool = True) -> None:
+    def __init__(self, redact: bool = True, custom_patterns: list[str] | None = None) -> None:
         self._redact = redact
+        self.PATTERNS = list(self.PATTERNS)
+        self._custom_patterns: set[str] = set()
+        for index, pattern in enumerate(custom_patterns or []):
+            try:
+                name = f"custom_{index}"
+                self.PATTERNS.insert(0, (name, re.compile(pattern)))
+                self._custom_patterns.add(name)
+            except re.error:
+                continue
 
     @property
     def redact(self) -> bool:

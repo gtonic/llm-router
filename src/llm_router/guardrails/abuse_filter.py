@@ -75,6 +75,9 @@ class AbuseFilter:
         "ransomware",
     ]
 
+    def __init__(self, block_threshold: float = 0.5) -> None:
+        self.block_threshold = block_threshold
+
     def check(self, text: str) -> AbuseResult:
         """Check text for abuse patterns.
 
@@ -129,7 +132,7 @@ class AbuseFilter:
         score = min(score, 1.0)
 
         # Determine if safe
-        is_safe = score < 0.5
+        is_safe = score < self.block_threshold
 
         return AbuseResult(
             safe=is_safe,

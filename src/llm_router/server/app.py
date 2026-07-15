@@ -104,6 +104,12 @@ try:
         ["status"],
     )
 
+    ADMIN_ACTIONS = Counter(
+        "llm_router_admin_actions_total",
+        "Runtime administration actions",
+        ["action", "status"],
+    )
+
     # Current active requests
     ACTIVE_REQUESTS = Gauge(
         "llm_router_active_requests",
@@ -149,6 +155,10 @@ try:
         """Record a routing decision."""
         ROUTE_DECISIONS.labels(strategy=strategy).inc()
 
+    def record_admin_action(action: str, status: str = "success"):
+        """Record a runtime administration action without request details."""
+        ADMIN_ACTIONS.labels(action=action, status=status).inc()
+
     def metrics_endpoint():
         """Prometheus metrics endpoint."""
         from starlette.responses import Response
@@ -176,6 +186,9 @@ except ImportError:
     def record_route_decision(*args, **kwargs):
         pass
 
+    def record_admin_action(*args, **kwargs):
+        pass
+
     def metrics_endpoint():
         from starlette.responses import PlainTextResponse
 
@@ -188,6 +201,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Startup
     global router_engine
     settings = GatewaySettings()
+    settings.load_runtime_config()
 
     # Initialize OpenTelemetry
     if settings.otlp_enabled:
@@ -204,9 +218,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Initialize guardrails
     rate_limiter = RateLimiter(rpm=settings.rate_limit_rpm, tpm=settings.rate_limit_tpm)
-    pii_filter = PiiFilter(redact=settings.pii_redact)
-    abuse_filter = AbuseFilter()
-    content_safety = ContentSafety()
+    pii_filter = PiiFilter(redact=settings.guardrails.pii_redact, custom_patterns=settings.guardrails.pii_patterns)
+    abuse_filter = AbuseFilter(block_threshold=settings.guardrails.abuse_block_threshold)
+    from llm_router.guardrails.content_safety import SafetyLevel
+
+    content_safety = ContentSafety(
+        block_threshold=SafetyLevel.MEDIUM if settings.guardrails.safety_enabled else SafetyLevel.CRITICAL
+    )
+    content_safety._keywords[SafetyLevel.MEDIUM] = {
+        keyword.lower() for keyword in settings.guardrails.safety_categories
+    }
 
     # Initialize routing strategies
     policy_matcher = PolicyMatcher(policies_dir=settings.policies_dir, default_policy=settings.default_policy)
@@ -217,6 +238,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Create the main router engine
     router_engine = RouterPolicyEngine(
         pool=model_pool,
+        settings=settings,
         routing_strategy=settings.default_strategy,
         policy_matcher=policy_matcher,
         complexity_detector=complexity_detector,
@@ -234,6 +256,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
+    from llm_router.server.routes import admin_router, skill_router
     from llm_router.server.routes import router as routes_router
 
     app = FastAPI(
@@ -254,6 +277,8 @@ def create_app() -> FastAPI:
 
     # Register routes
     app.include_router(routes_router)
+    app.include_router(admin_router)
+    app.include_router(skill_router)
 
     @app.get("/health")
     async def health():
