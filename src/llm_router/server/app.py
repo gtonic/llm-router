@@ -256,7 +256,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
-    from llm_router.server.routes import admin_router, skill_router
+    from llm_router.server.routes import admin_router, skill_router, system_router
     from llm_router.server.routes import router as routes_router
 
     app = FastAPI(
@@ -279,6 +279,7 @@ def create_app() -> FastAPI:
     app.include_router(routes_router)
     app.include_router(admin_router)
     app.include_router(skill_router)
+    app.include_router(system_router)
 
     @app.get("/health")
     async def health():

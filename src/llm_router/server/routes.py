@@ -49,6 +49,7 @@ logger = logging.getLogger("llm-router")
 router = APIRouter(prefix="/v1", tags=["llm-router"])
 admin_router = APIRouter(prefix="/admin", tags=["admin"])
 skill_router = APIRouter(tags=["agent-skills"])
+system_router = APIRouter(tags=["system"])
 
 
 # ───────────────────────────────────────────
@@ -951,6 +952,7 @@ _start_time: str = ""
 
 
 @router.get("/system/manifest")
+@system_router.get("/system/manifest")
 async def get_system_manifest():
     """Return the full system self-description.
 
@@ -1006,6 +1008,7 @@ async def get_system_manifest():
 
 
 @router.get("/system/health")
+@system_router.get("/system/health")
 async def get_system_health():
     """Detailed health check — backends, routing, guardrails."""
     if router_engine is None:
@@ -1046,6 +1049,7 @@ async def get_system_health():
 
 
 @router.get("/system/metrics")
+@system_router.get("/system/metrics")
 async def get_system_metrics():
     """Current metrics snapshot for Prometheus-compatible consumption.
 
@@ -1076,6 +1080,7 @@ async def get_system_metrics():
 
 
 @router.get("/system/capabilities")
+@system_router.get("/system/capabilities")
 async def get_system_capabilities():
     """Return allowed lifecycle actions.
 
