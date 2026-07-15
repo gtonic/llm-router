@@ -97,9 +97,9 @@ rules:
         assert result.strategy == "policy"
 
         def test_route_matches_complexity_rule(self):
-                policy_file = self.tmpdir / "default.yaml"
-                policy_file.write_text(
-                        """
+            policy_file = self.tmpdir / "default.yaml"
+            policy_file.write_text(
+                """
 rules:
     - id: complex-rule
         name: "Complex"
@@ -109,15 +109,15 @@ rules:
         priority: 10
         enabled: true
 """,
-                        encoding="utf-8",
-                )
-                matcher = PolicyMatcher(policies_dir=str(self.tmpdir))
-                import asyncio
+                encoding="utf-8",
+            )
+            matcher = PolicyMatcher(policies_dir=str(self.tmpdir))
+            import asyncio
 
-                long_prompt = "word " * 501
-                result = asyncio.run(matcher.route([{"role": "user", "content": long_prompt}]))
-                assert result.model_id == "remote-model"
-                assert result.policy_matched == "complex-rule"
+            long_prompt = "word " * 501
+            result = asyncio.run(matcher.route([{"role": "user", "content": long_prompt}]))
+            assert result.model_id == "remote-model"
+            assert result.policy_matched == "complex-rule"
 
     def test_route_no_match_returns_default(self):
         self.tmpdir2 = Path(tempfile.mkdtemp())

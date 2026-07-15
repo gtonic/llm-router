@@ -14,16 +14,6 @@ from dataclasses import asdict
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from llm_router.server.app import (
-    PROMETHEUS_ENABLED,
-    record_request,
-    record_error,
-    record_pii,
-    record_abuse,
-    record_rate_limit,
-    record_route_decision,
-)
-
 from llm_router.models import (
     ChatCompletionChunk,
     ChatCompletionRequest,
@@ -35,6 +25,11 @@ from llm_router.models import (
 )
 from llm_router.models import (
     UsageInfo as ModelsUsageInfo,
+)
+from llm_router.server.app import (
+    PROMETHEUS_ENABLED,
+    record_error,
+    record_request,
 )
 
 logger = logging.getLogger("llm-router")
@@ -48,9 +43,7 @@ def _normalize_messages(messages: list[dict]) -> list[dict]:
         content = message.get("content")
         if isinstance(content, list):
             text = " ".join(
-                part.get("text", "")
-                for part in content
-                if isinstance(part, dict) and isinstance(part.get("text"), str)
+                part.get("text", "") for part in content if isinstance(part, dict) and isinstance(part.get("text"), str)
             )
             message = {**message, "content": text}
         normalized.append(message)
@@ -197,9 +190,7 @@ async def list_models():
         raise HTTPException(status_code=503, detail="Router not initialized")
 
     model_list = ModelListResponse(
-        data=[ModelInfo(id="router-auto")] + [
-            ModelInfo(id=model_id) for model_id in router_engine.pool.list_models()
-        ]
+        data=[ModelInfo(id="router-auto")] + [ModelInfo(id=model_id) for model_id in router_engine.pool.list_models()]
     )
     return model_list
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -33,7 +32,7 @@ router_engine: RouterPolicyEngine | None = None
 # ───────────────────────────────────────────
 
 try:
-    from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
+    from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 
     PROMETHEUS_ENABLED = True
 
@@ -112,7 +111,15 @@ try:
         [],
     )
 
-    def record_request(model: str, strategy: str, status: str, duration: float, cost: float = 0.0, prompt_tokens: int = 0, completion_tokens: int = 0):
+    def record_request(
+        model: str,
+        strategy: str,
+        status: str,
+        duration: float,
+        cost: float = 0.0,
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+    ):
         """Record metrics for a completed request."""
         REQUESTS_TOTAL.labels(model=model, strategy=strategy, status=status).inc()
         REQUEST_DURATION.labels(model=model, strategy=strategy).observe(duration)
@@ -151,14 +158,27 @@ try:
 except ImportError:
     PROMETHEUS_ENABLED = False
 
-    def record_request(*args, **kwargs): pass
-    def record_error(*args, **kwargs): pass
-    def record_pii(): pass
-    def record_abuse(): pass
-    def record_rate_limit(): pass
-    def record_route_decision(*args, **kwargs): pass
+    def record_request(*args, **kwargs):
+        pass
+
+    def record_error(*args, **kwargs):
+        pass
+
+    def record_pii():
+        pass
+
+    def record_abuse():
+        pass
+
+    def record_rate_limit():
+        pass
+
+    def record_route_decision(*args, **kwargs):
+        pass
+
     def metrics_endpoint():
         from starlette.responses import PlainTextResponse
+
         return PlainTextResponse("Prometheus client not installed", status_code=501)
 
 

@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-import json
 
 from llm_router.config import ModelBackendConfig
 

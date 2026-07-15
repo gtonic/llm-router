@@ -28,9 +28,7 @@ def _message_text(message: dict) -> str:
         return content
     if isinstance(content, list):
         return " ".join(
-            part.get("text", "")
-            for part in content
-            if isinstance(part, dict) and isinstance(part.get("text"), str)
+            part.get("text", "") for part in content if isinstance(part, dict) and isinstance(part.get("text"), str)
         )
     return ""
 
