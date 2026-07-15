@@ -108,11 +108,14 @@ def create_app() -> FastAPI:
     return app
 
 
+# Module-level app instance so uvicorn can import via "llm_router.server.app:app"
+app = create_app()
+
+
 def main():
     """CLI entry point for the FastAPI server."""
     import uvicorn
 
-    create_app()
     uvicorn.run(
         "llm_router.server.app:app",
         host="0.0.0.0",

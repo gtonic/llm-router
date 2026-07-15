@@ -131,6 +131,59 @@ pytest tests/ -v
 pytest tests/ -v --cov=src/llm_router
 ```
 
+## Docker & Container
+
+### Docker
+
+```bash
+# Build image
+docker build -t llm-router:latest .
+
+# Run single container
+docker run -d --name llm-router \
+  -p 8000:8000 \
+  -e OTEL_ENABLED=false \
+  -e APP_DEBUG=true \
+  llm-router:latest
+
+# With Docker Compose (App + Jaeger)
+docker compose up -d
+
+# View logs
+docker compose logs -f app
+
+# Stop
+docker compose down
+```
+
+### Apple Container (macOS native)
+
+```bash
+# Build
+container build -t llm-router:latest -f Containerfile .
+
+# Run
+container run -d --name llm-router -p 8000:8000 llm-router:latest
+
+# Compose (App + Jaeger)
+container compose up -d
+```
+
+### Health Check
+
+```bash
+curl http://localhost:8000/health
+# {"status":"ok","version":"0.1.0"}
+```
+
+### API Docs
+
+```
+http://localhost:8000/docs        # Swagger UI
+http://localhost:8000/redoc       # ReDoc
+http://localhost:16686            # Jaeger Tracing UI (docker compose)
+```
+
 ## License
 
 MIT

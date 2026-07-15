@@ -1,0 +1,86 @@
+# ============================================
+# LLM Router - Docker Compose (local dev)
+# ============================================
+# Usage:
+#   docker compose up -d          # Start all services
+#   docker compose down           # Stop all services
+#   docker compose logs -f app    # View app logs
+# ============================================
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: llm-router:latest
+    container_name: llm-router
+    ports:
+      - "${CONTAINER_PORT:-8000}:8000"
+    environment:
+      - APP_NAME=llm-router
+      - APP_DEBUG=${APP_DEBUG:-false}
+      - ROUTER_DEFAULT_STRATEGY=${ROUTER_DEFAULT_STRATEGY:-policy}
+      - ROUTER_DEFAULT_MODEL=${ROUTER_DEFAULT_MODEL:-llama-3.1-8b}
+      - ROUTER_MAX_RETRIES=${ROUTER_MAX_RETRIES:-3}
+      - ROUTER_TIMEOUT=${ROUTER_TIMEOUT:-30}
+      - ROUTER_ALLOWED_MODELS=${ROUTER_ALLOWED_MODELS:-llama-3.1-8b,llama-3.1-70b,mistral-7b}
+      - ROUTER_FALLBACK_STRATEGY=${ROUTER_FALLBACK_STRATEGY:-round_robin}
+      - ROUTER_COST_OPTIMIZATION=${ROUTER_COST_OPTIMIZATION:-false}
+      - ROUTER_MAX_COST_PER_REQUEST=${ROUTER_MAX_COST_PER_REQUEST:-0.01}
+      - ROUTER_COST_THRESHOLD=${ROUTER_COST_THRESHOLD:-0.005}
+      - PII_DETECTION_ENABLED=${PII_DETECTION_ENABLED:-true}
+      - PII_DETECTION_SENSITIVITY=${PII_DETECTION_SENSITIVITY:-high}
+      - OTEL_ENABLED=${OTEL_ENABLED:-true}
+      - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-llm-router}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
+      - OTEL_EXPORTER_OTLP_ENABLED=${OTEL_EXPORTER_OTLP_ENABLED:-false}
+    volumes:
+      - ./profiles:/app/profiles:ro
+      - ./agent-policies:/app/agent-policies:ro
+      - ./logs:/app/logs:rw
+      - ./config:/app/config:ro
+    depends_on:
+      - jaeger
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    networks:
+      - llm-router-net
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+        reservations:
+          memory: 512M
+          cpus: "0.5"
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: jaeger
+    ports:
+      - "16686:16686"  # Web UI
+      - "14268:14268"  # HTTP ingest
+      - "14250:14250"  # gRPC ingest
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+      - LOG_LEVEL=debug
+    networks:
+      - llm-router-net
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
+        reservations:
+          memory: 256M
+          cpus: "0.25"
+
+networks:
+  llm-router-net:
+    driver: bridge
+    name: llm-router-net
