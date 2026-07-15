@@ -32,16 +32,47 @@ def _classify_task_type(text: str) -> str:
     """Classify the task type from prompt content."""
     text_lower = text.lower()
     code_kw = {
-        "def ", "function", "class ", "import ", "const ", "let ", "var ",
-        "code", "python", "javascript", "programm", "funktion", "implement",
+        "def ",
+        "function",
+        "class ",
+        "import ",
+        "const ",
+        "let ",
+        "var ",
+        "code",
+        "python",
+        "javascript",
+        "programm",
+        "funktion",
+        "implement",
     }
     analysis_kw = {
-        "analyze", "compare", "evaluate", "summarize", "explain", "why", "how",
-        "analysiere", "vergleiche", "bewerte", "zusammenfassung", "erkläre", "warum",
+        "analyze",
+        "compare",
+        "evaluate",
+        "summarize",
+        "explain",
+        "why",
+        "how",
+        "analysiere",
+        "vergleiche",
+        "bewerte",
+        "zusammenfassung",
+        "erkläre",
+        "warum",
     }
     creative_kw = {
-        "write", "create", "design", "compose", "story", "poem",
-        "schreibe", "erstelle", "entwirf", "geschichte", "gedicht",
+        "write",
+        "create",
+        "design",
+        "compose",
+        "story",
+        "poem",
+        "schreibe",
+        "erstelle",
+        "entwirf",
+        "geschichte",
+        "gedicht",
     }
 
     if any(kw in text_lower for kw in code_kw):
@@ -60,9 +91,7 @@ def _message_text(message: dict) -> str:
         return content
     if isinstance(content, list):
         return " ".join(
-            part.get("text", "")
-            for part in content
-            if isinstance(part, dict) and isinstance(part.get("text"), str)
+            part.get("text", "") for part in content if isinstance(part, dict) and isinstance(part.get("text"), str)
         )
     return ""
 

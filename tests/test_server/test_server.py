@@ -138,7 +138,7 @@ def make_tool_streaming_client():
                 {
                     "id": "call_1",
                     "type": "function",
-                    "function": {"name": "bash", "arguments": "{\"command\":\"pwd\"}"},
+                    "function": {"name": "bash", "arguments": '{"command":"pwd"}'},
                 }
             ],
         )

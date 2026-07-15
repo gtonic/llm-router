@@ -279,9 +279,11 @@ class GatewaySettings(BaseSettings):
     def _substitute_env_vars(value: Any) -> Any:
         """Recursively substitute ${VAR_NAME} placeholders in strings with environment variable values."""
         if isinstance(value, str):
+
             def replacer(match: re.Match) -> str:
                 var_name = match.group(1)
                 return os.environ.get(var_name, match.group(0))
+
             return _ENV_VAR_PATTERN.sub(replacer, value)
         elif isinstance(value, dict):
             return {k: GatewaySettings._substitute_env_vars(v) for k, v in value.items()}

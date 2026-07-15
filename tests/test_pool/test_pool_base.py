@@ -58,7 +58,7 @@ class TestToolCallMerging:
                 {
                     "id": "call_abc",
                     "type": "function",
-                    "function": {"name": "bash", "arguments": "{\"command\":"},
+                    "function": {"name": "bash", "arguments": '{"command":'},
                 }
             ],
         )
@@ -68,7 +68,7 @@ class TestToolCallMerging:
                 {
                     "id": "call_0",
                     "type": "function",
-                    "function": {"name": "", "arguments": "\"pwd\"}"},
+                    "function": {"name": "", "arguments": '"pwd"}'},
                 }
             ],
         )
@@ -77,7 +77,7 @@ class TestToolCallMerging:
             {
                 "id": "call_abc",
                 "type": "function",
-                "function": {"name": "bash", "arguments": "{\"command\":\"pwd\"}"},
+                "function": {"name": "bash", "arguments": '{"command":"pwd"}'},
             }
         ]
 
@@ -107,6 +107,7 @@ class TestToolCallMerging:
             {"name": "skill_view", "arguments": '{"name":"llm-wiki"}'},
             {"name": "execute_code", "arguments": '{"code":"print(1)"}'},
         ]
+
     def test_full(self):
         r = GenerateResult(
             content="world",
