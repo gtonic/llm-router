@@ -24,10 +24,11 @@ SKILL_MD_CONTENT = """---
 name: llm-router-gateway
 description: >-
   Configure and use the LLM Router & Gateway as a policy-based LLM request
-  router with guardrails, rate limiting, and OpenTelemetry tracing. Use when
-  setting up an LLM routing layer, configuring model backends, or integrating
-  the router into an agent workflow.
-version: 0.1.0
+  router with guardrails, runtime administration, rollback, rate limiting, and
+  OpenTelemetry tracing. Use when setting up an LLM routing layer, configuring
+  model backends, discovering capabilities, or integrating the router into an
+  agent workflow.
+version: 0.2.0
 author: llm-router team
 tags:
   - llm
@@ -53,29 +54,50 @@ agents:
 ## Overview
 
 The LLM Router is a policy-based LLM gateway that routes requests to the
-appropriate model backend based on complexity, policy, cost, or latency.
-It provides built-in guardrails (PII detection, abuse filtering, content
-safety, rate limiting) and OpenTelemetry tracing.
+appropriate model backend based on complexity, policy, cost, or latency. It
+provides built-in guardrails (PII detection, abuse filtering, content safety,
+rate limiting), runtime model administration, configuration rollback, and
+OpenTelemetry tracing.
 
 **Base URL:** `http://localhost:8000` (adjust for your deployment)
 
 ## Quick Start
 
-### 1. Verify Connectivity
+### 1. Discover the Router Skill
+
+```bash
+curl http://localhost:8000/.well-known/agent-skills/index.json
+curl http://localhost:8000/.well-known/agent-skills/llm-router-gateway/SKILL.md
+```
+
+The discovery index is machine-readable and includes the hosted skill URL and
+its SHA-256 digest.
+
+### 2. Read the System Description
+
+```bash
+curl http://localhost:8000/system/manifest
+curl http://localhost:8000/system/capabilities
+```
+
+The manifest describes models, routing strategies, guardrails, health,
+metrics, lifecycle actions, and the complete endpoint catalog.
+
+### 3. Verify Connectivity
 
 ```bash
 curl http://localhost:8000/health
 # Expected: {"status":"ok","version":"0.1.0"}
 ```
 
-### 2. Discover Available Models
+### 4. Discover Available Models
 
 ```bash
 curl http://localhost:8000/v1/models
 # Returns list of available model backends
 ```
 
-### 3. Send a Chat Completion
+### 5. Send a Chat Completion
 
 ```bash
 curl -X POST http://localhost:8000/v1/chat/completions \\
@@ -86,7 +108,7 @@ curl -X POST http://localhost:8000/v1/chat/completions \\
   }'
 ```
 
-### 4. Streaming Response
+### 6. Streaming Response
 
 ```bash
 curl -X POST http://localhost:8000/v1/chat/completions \\
@@ -150,6 +172,30 @@ All guardrails are enabled by default:
 | Content Safety | Filters unsafe content | `/guardrails/check` |
 | Rate Limiting | RPM/TPM limits per user | Automatic |
 
+Runtime guardrail state is available at `/admin/guardrails`. The runtime
+configuration is persisted to `config/runtime.yaml` and supports explicit
+PII, abuse, content-safety, and rate-limit enable flags.
+
+## Runtime Administration
+
+Model backends can be inspected and changed without restarting the router:
+
+```bash
+curl http://localhost:8000/admin/models
+
+curl -X PATCH http://localhost:8000/admin/models/llama-local/toggle
+
+curl -X PUT http://localhost:8000/admin/guardrails \
+  -H "Content-Type: application/json" \
+  -d '{"pii_enabled": true, "pii_redact": true, "abuse_enabled": true}'
+
+curl -X POST http://localhost:8000/admin/rollback
+```
+
+Model updates rebuild live backend clients when connection settings change.
+Disabled backends remain visible to administrators but are excluded from
+routing. Runtime configuration keeps bounded rollback history.
+
 ## Model Selection
 
 Use `router-auto` to let the router decide the best backend:
@@ -178,6 +224,15 @@ Or target a specific backend:
 | `/system/metrics` | GET | Prometheus metrics snapshot | None |
 | `/system/capabilities` | GET | Allowed lifecycle actions | None |
 | `/metrics` | GET | Raw Prometheus text format | None |
+| `/.well-known/agent-skills/index.json` | GET | Agent Skill discovery index | None |
+| `/.well-known/agent-skills/llm-router-gateway/SKILL.md` | GET | Hosted Agent Skill | None |
+| `/admin/models` | GET, POST | List or create model backends | Admin |
+| `/admin/models/{model_id}` | GET, PUT, DELETE | Inspect, update, or remove a backend | Admin |
+| `/admin/models/{model_id}/toggle` | PATCH | Enable or disable a backend | Admin |
+| `/admin/guardrails` | GET, PUT | Inspect or update guardrails | Admin |
+| `/admin/guardrails/{guardrail_name}/toggle` | PATCH | Toggle a guardrail | Admin |
+| `/admin/guardrails/pii/patterns` | POST, DELETE | Manage custom PII patterns | Admin |
+| `/admin/rollback` | POST | Restore the previous runtime configuration | Admin |
 
 ## Integration Patterns
 
@@ -218,9 +273,10 @@ async with httpx.AsyncClient() as client:
 Agents can self-configure by:
 
 1. Fetching `/.well-known/agent-skills/index.json` to discover capabilities
-2. Reading `/system/manifest` for full system description
-3. Using `/system/capabilities` to discover allowed actions
-4. Monitoring `/system/health` for backend status
+2. Reading the hosted `SKILL.md` artifact and verifying its digest
+3. Reading `/system/manifest` for full system description
+4. Using `/system/capabilities` to discover allowed actions
+5. Monitoring `/system/health` for backend status and `/system/metrics` for telemetry
 
 ## Troubleshooting
 
@@ -229,7 +285,9 @@ Agents can self-configure by:
 | 503 "Router not initialized" | Server not started or config invalid |
 | 404 "model not found" | Model not in models.yaml or disabled |
 | Rate limited | Check RPM/TPM limits in config |
-| PII redacted | Check PII patterns in `/guardrails/pii/patterns` |
+| PII redacted | Check `/admin/guardrails` and custom patterns in `/admin/guardrails/pii/patterns` |
+| Backend unavailable | Check `/system/health`, `/admin/models`, and whether the backend is enabled |
+| Runtime change needs undoing | Call `POST /admin/rollback` |
 
 ## Installation
 
@@ -283,7 +341,8 @@ def get_skill_index() -> dict[str, Any]:
                 "name": "llm-router-gateway",
                 "type": "skill-md",
                 "description": (
-                    "Policy-based LLM request router with guardrails, rate limiting, and OpenTelemetry tracing."
+                    "Policy-based LLM router with runtime administration, guardrails, rollback, "
+                    "rate limiting, and OpenTelemetry tracing."
                 ),
                 "url": "/.well-known/agent-skills/llm-router-gateway/SKILL.md",
                 "digest": _compute_sha256(SKILL_MD_CONTENT),
