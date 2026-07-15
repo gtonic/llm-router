@@ -19,6 +19,11 @@ class RoundRobinPolicy(PolicyBase):
         self._counter = 0
         self._lock = asyncio.Lock()
 
+    def update_models(self, model_ids: list[str]) -> None:
+        """Replace the active model set after runtime configuration changes."""
+        self.model_ids = list(model_ids)
+        self._counter = 0
+
     async def route(
         self,
         messages: list[dict],
@@ -27,6 +32,8 @@ class RoundRobinPolicy(PolicyBase):
         available_models: list[ModelBackend] | None = None,
     ) -> RoutingResult:
         async with self._lock:
+            if not self.model_ids:
+                raise RuntimeError("No enabled models available for round-robin routing")
             model = self.model_ids[self._counter % len(self.model_ids)]
             self._counter += 1
             return RoutingResult(model_id=model, strategy="round_robin")

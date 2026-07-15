@@ -26,7 +26,8 @@ RUN pip install --no-compile --upgrade pip && \
 # Copy source and run (optional) tests
 COPY src/ src/
 COPY tests/ tests/
-RUN python -m pytest tests/ -q --tb=short 2>&1 | tail -20 || true
+ENV PYTHONPATH=/build/src
+RUN python -m pytest tests/ -q --tb=short
 
 # ── 2. Production stage ────────────────────────────────────────────
 FROM python:3.12-slim AS runtime
@@ -43,6 +44,9 @@ ENV PATH="/app/venv/bin:$PATH"
 # Copy application source
 COPY --from=builder /build/src /app/src
 COPY --from=builder /build/pyproject.toml /app/
+
+# Source files must remain readable after dropping privileges to appuser.
+RUN chmod -R a+rX /app/src
 
 # Make llm_router importable (entry points expect it on PYTHONPATH)
 ENV PYTHONPATH=/app/src

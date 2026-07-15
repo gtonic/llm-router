@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import os
 import re
+import tempfile
+from contextlib import suppress
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -158,6 +160,7 @@ class PolicyRule:
 class GuardrailConfig:
     """Granular guardrail configuration."""
 
+    pii_enabled: bool = True
     pii_redact: bool = True
     pii_max_tokens: int = 4096
     pii_patterns: list[str] = field(
@@ -169,6 +172,7 @@ class GuardrailConfig:
         ]
     )
     abuse_block_threshold: float = 0.8
+    abuse_enabled: bool = True
     safety_enabled: bool = True
     safety_categories: list[str] = field(
         default_factory=lambda: [
@@ -183,10 +187,12 @@ class GuardrailConfig:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "pii_enabled": self.pii_enabled,
             "pii_redact": self.pii_redact,
             "pii_max_tokens": self.pii_max_tokens,
             "pii_patterns": self.pii_patterns,
             "abuse_block_threshold": self.abuse_block_threshold,
+            "abuse_enabled": self.abuse_enabled,
             "safety_enabled": self.safety_enabled,
             "safety_categories": self.safety_categories,
         }
@@ -249,6 +255,7 @@ class GatewaySettings(BaseSettings):
     guardrails_output: bool = True
     guardrails: GuardrailConfig = field(default_factory=GuardrailConfig)
     rate_limit: RateLimitConfig = field(default_factory=RateLimitConfig)
+    runtime_config_path: str = "config/runtime.yaml"
 
     # ── Observability ─────────────────────────
     otlp_enabled: bool = True
@@ -339,6 +346,76 @@ class GatewaySettings(BaseSettings):
         with open(path, "w", encoding="utf-8") as fh:
             yaml.dump([m.to_dict() for m in models], fh, default_flow_style=False, sort_keys=False)
         return path
+
+    def save_runtime_config(self, path: str | Path | None = None) -> Path:
+        """Atomically persist mutable guardrail and rate-limit settings."""
+        target = Path(path or os.environ.get("ROUTER_RUNTIME_CONFIG", self.runtime_config_path))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        history_path = target.with_suffix(".history.yaml")
+        history = []
+        if target.exists():
+            with open(target, encoding="utf-8") as existing:
+                previous = yaml.safe_load(existing) or {}
+            if history_path.exists():
+                with open(history_path, encoding="utf-8") as existing_history:
+                    history = yaml.safe_load(existing_history) or []
+            history = [*history, previous][-10:]
+        payload = {
+            "guardrails": self.guardrails.to_dict(),
+            "rate_limit": self.rate_limit.to_dict(),
+        }
+        fd, temporary_name = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                yaml.safe_dump(payload, fh, sort_keys=False)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(temporary_name, target)
+            history_fd, history_temporary_name = tempfile.mkstemp(
+                prefix=f".{history_path.name}.", dir=history_path.parent
+            )
+            with os.fdopen(history_fd, "w", encoding="utf-8") as history_file:
+                yaml.safe_dump(history, history_file, sort_keys=False)
+                history_file.flush()
+                os.fsync(history_file.fileno())
+            os.replace(history_temporary_name, history_path)
+        except Exception:
+            with suppress(FileNotFoundError):
+                os.unlink(temporary_name)
+            raise
+        return target
+
+    def rollback_runtime_config(self, path: str | Path | None = None) -> bool:
+        """Restore the most recent runtime configuration snapshot."""
+        target = Path(path or os.environ.get("ROUTER_RUNTIME_CONFIG", self.runtime_config_path))
+        history_path = target.with_suffix(".history.yaml")
+        if not history_path.exists():
+            return False
+        with open(history_path, encoding="utf-8") as fh:
+            history = yaml.safe_load(fh) or []
+        if not history:
+            return False
+        restored = history.pop()
+        with open(history_path, "w", encoding="utf-8") as fh:
+            yaml.safe_dump(history, fh, sort_keys=False)
+        with open(target, "w", encoding="utf-8") as fh:
+            yaml.safe_dump(restored, fh, sort_keys=False)
+        self.load_runtime_config(target)
+        return True
+
+    def load_runtime_config(self, path: str | Path | None = None) -> None:
+        """Load persisted mutable runtime settings when the file exists."""
+        target = Path(path or os.environ.get("ROUTER_RUNTIME_CONFIG", self.runtime_config_path))
+        if not target.exists():
+            return
+        with open(target, encoding="utf-8") as fh:
+            payload = yaml.safe_load(fh) or {}
+        for key, value in payload.get("guardrails", {}).items():
+            if hasattr(self.guardrails, key):
+                setattr(self.guardrails, key, value)
+        for key, value in payload.get("rate_limit", {}).items():
+            if hasattr(self.rate_limit, key):
+                setattr(self.rate_limit, key, value)
 
     def load_policies_from_yaml(self, policy_name: str | None = None) -> list[PolicyRule]:
         """Load policy rules from ``<policies_dir>/<policy_name>.yaml``.

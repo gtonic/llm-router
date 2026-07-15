@@ -21,6 +21,23 @@ from llm_router.pool.base import (
 )
 
 
+def _response_content(response) -> str:
+    """Return assistant text from standard or reasoning-only LangChain responses."""
+    content = getattr(response, "content", "")
+    if isinstance(content, str) and content:
+        return content
+
+    for metadata in (
+        getattr(response, "additional_kwargs", None),
+        getattr(response, "response_metadata", None),
+    ):
+        if isinstance(metadata, dict):
+            reasoning = metadata.get("reasoning_content")
+            if isinstance(reasoning, str) and reasoning:
+                return reasoning
+    return content if isinstance(content, str) else ""
+
+
 class LlamaCPPBackend(ModelBackend):
     """Local LLM backend talking to Llama.cpp / Ollama.
 
@@ -74,7 +91,7 @@ class LlamaCPPBackend(ModelBackend):
                 )
 
         client = self._client.bind_tools(tools) if tools else self._client
-        invoke_kwargs = {"timeout": self.config.timeout}
+        invoke_kwargs = {"timeout": self.config.timeout, "extra_body": {"reasoning_format": "none"}}
         if max_tokens is not None:
             invoke_kwargs["max_tokens"] = max_tokens
         response = await client.ainvoke(lc_messages, **invoke_kwargs)
@@ -85,7 +102,7 @@ class LlamaCPPBackend(ModelBackend):
         )
         tool_calls = normalize_tool_calls(getattr(response, "tool_calls", None))
         return GenerateResult(
-            content=response.content if isinstance(response.content, str) else "",
+            content=_response_content(response),
             model=self.config.model_name,
             usage=UsageInfo(
                 prompt_tokens=usage_data.get("prompt_tokens", 0),
@@ -125,11 +142,11 @@ class LlamaCPPBackend(ModelBackend):
 
         client = self._client.bind_tools(tools) if tools else self._client
         streamed_tool_calls = []
-        stream_kwargs = {"timeout": self.config.timeout}
+        stream_kwargs = {"timeout": self.config.timeout, "extra_body": {"reasoning_format": "none"}}
         if max_tokens is not None:
             stream_kwargs["max_tokens"] = max_tokens
         async for chunk in client.astream(lc_messages, **stream_kwargs):
-            content = chunk.content if hasattr(chunk, "content") else ""
+            content = _response_content(chunk)
             tool_calls = normalize_tool_calls(getattr(chunk, "tool_call_chunks", None))
             merge_tool_calls(streamed_tool_calls, tool_calls)
             yield GenerateResult(
@@ -157,7 +174,9 @@ class LlamaCPPBackend(ModelBackend):
             import httpx
 
             async with httpx.AsyncClient(timeout=5) as http:
-                resp = await http.get(f"{self.config.base_url.rstrip('/')}/v1/models")
+                base_url = self.config.base_url.rstrip("/")
+                models_url = f"{base_url}/models" if base_url.endswith("/v1") else f"{base_url}/v1/models"
+                resp = await http.get(models_url)
                 if resp.status_code == 200:
                     latency = (time.perf_counter() - start) * 1000
                     return HealthStatus(healthy=True, latency_ms=round(latency, 2))

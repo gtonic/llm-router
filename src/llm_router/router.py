@@ -6,7 +6,7 @@ import logging
 import time
 from collections.abc import AsyncIterator
 
-from llm_router.config import RoutingStrategy
+from llm_router.config import GatewaySettings, RoutingStrategy
 from llm_router.guardrails.abuse_filter import AbuseFilter
 from llm_router.guardrails.content_safety import ContentSafety
 from llm_router.guardrails.pii_filter import PiiFilter
@@ -82,8 +82,10 @@ class RouterPolicyEngine:
         abuse_filter: AbuseFilter,
         content_safety: ContentSafety,
         default_model: str = "llama-local",
+        settings: GatewaySettings | None = None,
     ) -> None:
         self.pool = pool
+        self.settings = settings or GatewaySettings()
         self.routing_strategy = routing_strategy
         self.policy_matcher = policy_matcher
         self.complexity_detector = complexity_detector
@@ -94,6 +96,10 @@ class RouterPolicyEngine:
         self.abuse_filter = abuse_filter
         self.content_safety = content_safety
         self.default_model = default_model
+
+    def sync_runtime_models(self) -> None:
+        """Synchronize routing policies with currently enabled backends."""
+        self.round_robin.update_models(self.pool.list_models())
 
     async def generate(
         self,
@@ -108,21 +114,25 @@ class RouterPolicyEngine:
         request_id = f"{user_id or 'anonymous'}:{int(time.time())}"
 
         # 1. Rate limit check
-        rate_result = await self.rate_limiter.check(client_id=request_id, tokens=100)
-        if not rate_result.allowed:
+        rate_result = (
+            await self.rate_limiter.check(client_id=request_id, tokens=100)
+            if self.settings.rate_limit.enabled
+            else None
+        )
+        if rate_result is not None and not rate_result.allowed:
             logger.warning("[%s] Rate limited: %s", request_id, rate_result.error)
             raise Exception(f"Rate limited: {rate_result.error}")
 
         # 2. Input PII filter
         full_text = " ".join(_message_text(msg) for msg in messages)
-        pii_result = self.pii_filter.check(full_text, mode="input")
-        if pii_result.has_pii:
+        pii_result = self.pii_filter.check(full_text, mode="input") if self.settings.guardrails.pii_enabled else None
+        if pii_result is not None and pii_result.has_pii:
             logger.info("[%s] PII detected: %s", request_id, pii_result.patterns)
             messages = _redact_messages(messages, self.pii_filter)
 
         # 3. Input abuse filter
-        abuse_result = self.abuse_filter.check(full_text)
-        if not abuse_result.safe:
+        abuse_result = self.abuse_filter.check(full_text) if self.settings.guardrails.abuse_enabled else None
+        if abuse_result is not None and not abuse_result.safe:
             logger.warning(
                 "[%s] Abuse detected (score=%.2f): %s",
                 request_id,
@@ -181,17 +191,22 @@ class RouterPolicyEngine:
         request_id = f"{user_id or 'anonymous'}:{int(time.time())}"
 
         # 1. Rate limit check
-        rate_result = await self.rate_limiter.check(client_id=request_id, tokens=100)
-        if not rate_result.allowed:
+        rate_result = (
+            await self.rate_limiter.check(client_id=request_id, tokens=100)
+            if self.settings.rate_limit.enabled
+            else None
+        )
+        if rate_result is not None and not rate_result.allowed:
             raise Exception(f"Rate limited: {rate_result.error}")
 
         # 2. Input PII filter
         full_text = " ".join(_message_text(msg) for msg in messages)
-        self.pii_filter.check(full_text, mode="input")
+        if self.settings.guardrails.pii_enabled:
+            self.pii_filter.check(full_text, mode="input")
 
         # 3. Input abuse filter
-        abuse_result = self.abuse_filter.check(full_text)
-        if not abuse_result.safe:
+        abuse_result = self.abuse_filter.check(full_text) if self.settings.guardrails.abuse_enabled else None
+        if abuse_result is not None and not abuse_result.safe:
             raise Exception(f"Abuse detected: {abuse_result.categories}")
 
         # 4. Routing decision

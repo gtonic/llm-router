@@ -26,10 +26,10 @@ services:
       - ROUTER_OTELP_ENDPOINT=${ROUTER_OTELP_ENDPOINT:-http://jaeger:4317/v1/traces}
       - ROUTER_OTELP_PROTOCOL=${ROUTER_OTELP_PROTOCOL:-grpc}
     volumes:
-      - ./profiles:/app/profiles:ro
+      - ./profiles:/app/profiles:rw
       - ./agent-policies:/app/agent-policies:ro
       - ./logs:/app/logs:rw
-      - ./config:/app/config:ro
+      - ./config:/app/config:rw
     depends_on:
       - jaeger
     restart: unless-stopped
