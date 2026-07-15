@@ -41,13 +41,23 @@ def setup_otel(
 
     if otlp_enabled:
         try:
-            from opentelemetry.exporter.otlp.proto.grpc.exporter import OTLPSpanExporter
-            # http exporter alternative available via opentelemetry-exporter-otlp-proto-http
+            if otlp_protocol == "grpc":
+                # gRPC: endpoint = host:port (no scheme)
+                from opentelemetry.exporter.otlp.proto.grpc.exporter import OTLPSpanExporter
 
-            exporter = OTLPSpanExporter(
-                endpoint=otlp_endpoint,
-                timeout=5,
-            )
+                grpc_endpoint = otlp_endpoint.replace("http://", "").replace("https://", "").rstrip("/")
+                exporter = OTLPSpanExporter(
+                    endpoint=grpc_endpoint,
+                    timeout=5,
+                )
+            else:
+                # HTTP/protobuf: endpoint = full URL
+                from opentelemetry.exporter.otlp.proto.http.exporter import OTLPSpanExporter
+
+                exporter = OTLPSpanExporter(
+                    endpoint=otlp_endpoint,
+                    timeout=5,
+                )
             processor = BatchSpanProcessor(exporter)
             provider.add_span_processor(processor)
         except ImportError:

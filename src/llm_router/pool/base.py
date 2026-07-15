@@ -5,8 +5,31 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+import json
 
 from llm_router.config import ModelBackendConfig
+
+
+def normalize_tool_calls(tool_calls: list[dict] | None) -> list[dict] | None:
+    """Convert LangChain tool calls to OpenAI chat-completion tool calls."""
+    if not tool_calls:
+        return None
+    normalized = []
+    for index, call in enumerate(tool_calls):
+        if call.get("type") == "function" and "function" in call:
+            normalized.append(call)
+            continue
+        arguments = call.get("args", call.get("arguments", {}))
+        if not isinstance(arguments, str):
+            arguments = json.dumps(arguments, separators=(",", ":"))
+        normalized.append(
+            {
+                "id": call.get("id") or f"call_{index}",
+                "type": "function",
+                "function": {"name": call.get("name", ""), "arguments": arguments},
+            }
+        )
+    return normalized
 
 
 @dataclass

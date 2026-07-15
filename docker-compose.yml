@@ -16,24 +16,14 @@ services:
     container_name: llm-router
     ports:
       - "${CONTAINER_PORT:-8000}:8000"
+    env_file:
+      - .env
     environment:
-      - APP_NAME=llm-router
-      - APP_DEBUG=${APP_DEBUG:-false}
-      - ROUTER_DEFAULT_STRATEGY=${ROUTER_DEFAULT_STRATEGY:-policy}
-      - ROUTER_DEFAULT_MODEL=${ROUTER_DEFAULT_MODEL:-llama-3.1-8b}
-      - ROUTER_MAX_RETRIES=${ROUTER_MAX_RETRIES:-3}
-      - ROUTER_TIMEOUT=${ROUTER_TIMEOUT:-30}
-      - ROUTER_ALLOWED_MODELS=${ROUTER_ALLOWED_MODELS:-llama-3.1-8b,llama-3.1-70b,mistral-7b}
-      - ROUTER_FALLBACK_STRATEGY=${ROUTER_FALLBACK_STRATEGY:-round_robin}
-      - ROUTER_COST_OPTIMIZATION=${ROUTER_COST_OPTIMIZATION:-false}
-      - ROUTER_MAX_COST_PER_REQUEST=${ROUTER_MAX_COST_PER_REQUEST:-0.01}
-      - ROUTER_COST_THRESHOLD=${ROUTER_COST_THRESHOLD:-0.005}
-      - PII_DETECTION_ENABLED=${PII_DETECTION_ENABLED:-true}
-      - PII_DETECTION_SENSITIVITY=${PII_DETECTION_SENSITIVITY:-high}
-      - OTEL_ENABLED=${OTEL_ENABLED:-true}
-      - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-llm-router}
-      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
-      - OTEL_EXPORTER_OTLP_ENABLED=${OTEL_EXPORTER_OTLP_ENABLED:-false}
+      # Override env_file values with defaults
+      - ROUTER_DEFAULT_MODEL=${ROUTER_DEFAULT_MODEL:-llama-local}
+      - ROUTER_ALLOWED_MODELS=${ROUTER_ALLOWED_MODELS:-llama-local,gpt4o}
+      - ROUTER_OTELP_ENDPOINT=${ROUTER_OTELP_ENDPOINT:-http://jaeger:4317/v1/traces}
+      - ROUTER_OTELP_PROTOCOL=${ROUTER_OTELP_PROTOCOL:-grpc}
     volumes:
       - ./profiles:/app/profiles:ro
       - ./agent-policies:/app/agent-policies:ro
@@ -68,7 +58,10 @@ services:
       - "14250:14250"  # gRPC ingest
     environment:
       - COLLECTOR_OTLP_ENABLED=true
+      - COLLECTOR_OTLP_HTTP_ENABLED=true
       - LOG_LEVEL=debug
+      - MEMORY_MAX_TRACES=50000
+      - QUERY_BASE_PATH=/jaeger
     networks:
       - llm-router-net
     deploy:

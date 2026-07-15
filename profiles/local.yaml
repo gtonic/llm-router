@@ -1,7 +1,7 @@
 - id: llama-local
   name: Llama CPP Local
   type: local
-  base_url: http://localhost:8888/v1
+  base_url: http://host.docker.internal:8888/v1
   api_key: ""
   model_name: Qwen3.6-35B-A3B-local
   enabled: true

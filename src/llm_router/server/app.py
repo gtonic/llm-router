@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -26,6 +27,139 @@ logger = logging.getLogger("llm-router")
 
 # Global router instance (initialized in lifespan)
 router_engine: RouterPolicyEngine | None = None
+
+# ───────────────────────────────────────────
+# Prometheus Metrics
+# ───────────────────────────────────────────
+
+try:
+    from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
+
+    PROMETHEUS_ENABLED = True
+
+    # Request counters
+    REQUESTS_TOTAL = Counter(
+        "llm_router_requests_total",
+        "Total number of requests",
+        ["model", "strategy", "status"],
+    )
+
+    ERRORS_TOTAL = Counter(
+        "llm_router_errors_total",
+        "Total number of errors",
+        ["model", "error_type"],
+    )
+
+    # Latency histogram
+    REQUEST_DURATION = Histogram(
+        "llm_router_request_duration_seconds",
+        "Request latency in seconds",
+        ["model", "strategy"],
+        buckets=[0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0],
+    )
+
+    # Cost tracking
+    COST_TOTAL = Counter(
+        "llm_router_cost_total",
+        "Total cost in USD",
+        ["model"],
+    )
+
+    # Token usage
+    TOKENS_TOTAL = Counter(
+        "llm_router_tokens_total",
+        "Total tokens processed",
+        ["type", "model"],  # type: prompt|completion
+    )
+
+    # Guardrails
+    PII_DETECTED = Counter(
+        "llm_router_pii_detected_total",
+        "Total PII detections",
+        ["sensitivity"],
+    )
+
+    ABUSE_BLOCKED = Counter(
+        "llm_router_abuse_blocked_total",
+        "Total abuse requests blocked",
+        [],
+    )
+
+    RATE_LIMITED = Counter(
+        "llm_router_rate_limited_total",
+        "Total rate-limited requests",
+        [],
+    )
+
+    # Route decisions
+    ROUTE_DECISIONS = Counter(
+        "llm_router_route_decisions_total",
+        "Total routing decisions",
+        ["strategy"],
+    )
+
+    # Response status codes
+    RESPONSE_STATUS = Counter(
+        "llm_router_response_status_total",
+        "Response status codes",
+        ["status"],
+    )
+
+    # Current active requests
+    ACTIVE_REQUESTS = Gauge(
+        "llm_router_active_requests",
+        "Number of active requests",
+        [],
+    )
+
+    def record_request(model: str, strategy: str, status: str, duration: float, cost: float = 0.0, prompt_tokens: int = 0, completion_tokens: int = 0):
+        """Record metrics for a completed request."""
+        REQUESTS_TOTAL.labels(model=model, strategy=strategy, status=status).inc()
+        REQUEST_DURATION.labels(model=model, strategy=strategy).observe(duration)
+        COST_TOTAL.labels(model=model).inc(cost)
+        TOKENS_TOTAL.labels(type="prompt", model=model).inc(prompt_tokens)
+        TOKENS_TOTAL.labels(type="completion", model=model).inc(completion_tokens)
+        RESPONSE_STATUS.labels(status=status).inc()
+
+    def record_error(model: str, error_type: str):
+        """Record an error."""
+        ERRORS_TOTAL.labels(model=model, error_type=error_type).inc()
+        RESPONSE_STATUS.labels(status="error").inc()
+
+    def record_pii():
+        """Record PII detection."""
+        PII_DETECTED.labels(sensitivity="high").inc()
+
+    def record_abuse():
+        """Record abuse detection."""
+        ABUSE_BLOCKED.inc()
+
+    def record_rate_limit():
+        """Record rate limiting."""
+        RATE_LIMITED.inc()
+
+    def record_route_decision(strategy: str):
+        """Record a routing decision."""
+        ROUTE_DECISIONS.labels(strategy=strategy).inc()
+
+    def metrics_endpoint():
+        """Prometheus metrics endpoint."""
+        from starlette.responses import Response
+
+        return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+except ImportError:
+    PROMETHEUS_ENABLED = False
+
+    def record_request(*args, **kwargs): pass
+    def record_error(*args, **kwargs): pass
+    def record_pii(): pass
+    def record_abuse(): pass
+    def record_rate_limit(): pass
+    def record_route_decision(*args, **kwargs): pass
+    def metrics_endpoint():
+        from starlette.responses import PlainTextResponse
+        return PlainTextResponse("Prometheus client not installed", status_code=501)
 
 
 @asynccontextmanager
@@ -104,6 +238,11 @@ def create_app() -> FastAPI:
     @app.get("/health")
     async def health():
         return {"status": "ok", "version": "0.1.0"}
+
+    @app.get("/metrics")
+    async def metrics():
+        """Prometheus metrics endpoint."""
+        return metrics_endpoint()
 
     return app
 

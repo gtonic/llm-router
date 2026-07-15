@@ -173,14 +173,14 @@ class TestSetupOtel:
         mock_resource = Mock()
 
         # Create a mock module that has OTLPSpanExporter
-        mock_grpc_module = type(sys)("mock_grpc")
-        mock_grpc_module.OTLPSpanExporter = mock_otlp
+        mock_http_module = type(sys)("mock_http")
+        mock_http_module.OTLPSpanExporter = mock_otlp
 
         with (
             patch("opentelemetry.trace.set_tracer_provider"),
             patch("opentelemetry.sdk.trace.TracerProvider"),
             patch("opentelemetry.sdk.resources.Resource.create", return_value=mock_resource),
-            patch.dict(sys.modules, {"opentelemetry.exporter.otlp.proto.grpc.exporter": mock_grpc_module}),
+            patch.dict(sys.modules, {"opentelemetry.exporter.otlp.proto.http.exporter": mock_http_module}),
         ):
             mock_otlp.return_value = Mock()
 
@@ -205,20 +205,20 @@ class TestSetupOtel:
         mock_resource = Mock()
 
         # Create a mock module that raises ImportError on OTLPSpanExporter access
-        mock_grpc_module = type(sys)("mock_grpc")
+        mock_http_module = type(sys)("mock_http")
 
         class FakeOTLPClass:
             def __init__(self, *a, **kw):
                 raise ImportError("no otlp")
 
-        mock_grpc_module.OTLPSpanExporter = FakeOTLPClass
+        mock_http_module.OTLPSpanExporter = FakeOTLPClass
 
         with (
             patch("opentelemetry.trace.set_tracer_provider"),
             patch("opentelemetry.sdk.trace.TracerProvider"),
             patch("opentelemetry.sdk.resources.Resource.create", return_value=mock_resource),
             patch("opentelemetry.sdk.trace.export.ConsoleSpanExporter") as mock_console,
-            patch.dict(sys.modules, {"opentelemetry.exporter.otlp.proto.grpc.exporter": mock_grpc_module}),
+            patch.dict(sys.modules, {"opentelemetry.exporter.otlp.proto.http.exporter": mock_http_module}),
         ):
             from llm_router.tracing.otel_setup import setup_otel
 
@@ -256,14 +256,14 @@ class TestSetupOtel:
         mock_otlp = Mock()
 
         # Create a mock module that has OTLPSpanExporter
-        mock_grpc_module = type(sys)("mock_grpc")
-        mock_grpc_module.OTLPSpanExporter = mock_otlp
+        mock_http_module = type(sys)("mock_http")
+        mock_http_module.OTLPSpanExporter = mock_otlp
 
         with (
             patch("opentelemetry.trace.set_tracer_provider"),
             patch("opentelemetry.sdk.trace.TracerProvider"),
             patch("opentelemetry.sdk.resources.Resource.create", return_value=mock_resource),
-            patch.dict(sys.modules, {"opentelemetry.exporter.otlp.proto.grpc.exporter": mock_grpc_module}),
+            patch.dict(sys.modules, {"opentelemetry.exporter.otlp.proto.http.exporter": mock_http_module}),
         ):
             mock_otlp.return_value = Mock()
 

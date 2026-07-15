@@ -6,7 +6,7 @@ import time
 from collections.abc import AsyncIterator
 
 from llm_router.config import ModelBackendConfig
-from llm_router.pool.base import GenerateResult, HealthStatus, ModelBackend, UsageInfo
+from llm_router.pool.base import GenerateResult, HealthStatus, ModelBackend, UsageInfo, normalize_tool_calls
 
 
 class RemoteBackend(ModelBackend):
@@ -44,6 +44,7 @@ class RemoteBackend(ModelBackend):
         messages: list[dict],
         temperature: float = 0.3,
         max_tokens: int = 4096,
+        tools: list[dict] | None = None,
         **kwargs,
     ) -> GenerateResult:
         start = time.perf_counter()
@@ -61,15 +62,17 @@ class RemoteBackend(ModelBackend):
             else:
                 lc_messages.append(AIMessage(content=content))
 
-        response = await self._client.ainvoke(lc_messages, timeout=self.config.timeout)
+        client = self._client.bind_tools(tools) if tools else self._client
+        response = await client.ainvoke(lc_messages, timeout=self.config.timeout)
         usage = response.response_metadata.get("token_usage", {})
 
         elapsed = (time.perf_counter() - start) * 1000
         prompt_tokens = usage.get("prompt_tokens", 0)
         completion_tokens = usage.get("completion_tokens", 0)
 
+        tool_calls = normalize_tool_calls(getattr(response, "tool_calls", None))
         return GenerateResult(
-            content=response.content,
+            content=response.content if isinstance(response.content, str) else "",
             model=self.config.model_name,
             usage=UsageInfo(
                 prompt_tokens=prompt_tokens,
@@ -77,7 +80,8 @@ class RemoteBackend(ModelBackend):
                 total_tokens=prompt_tokens + completion_tokens,
                 cost=self._calculate_cost(prompt_tokens, completion_tokens),
             ),
-            finish_reason="stop",
+            finish_reason="tool_calls" if tool_calls else "stop",
+            tool_calls=tool_calls,
             latency_ms=round(elapsed, 2),
         )
 
@@ -85,6 +89,7 @@ class RemoteBackend(ModelBackend):
         self,
         messages: list[dict],
         temperature: float = 0.3,
+        tools: list[dict] | None = None,
         **kwargs,
     ) -> AsyncIterator[GenerateResult]:
         self._ensure_client()
@@ -101,13 +106,16 @@ class RemoteBackend(ModelBackend):
             else:
                 lc_messages.append(AIMessage(content=content))
 
-        async for chunk in self._client.astream(lc_messages, timeout=self.config.timeout):
+        client = self._client.bind_tools(tools) if tools else self._client
+        async for chunk in client.astream(lc_messages, timeout=self.config.timeout):
             content = chunk.content if hasattr(chunk, "content") else ""
+            tool_calls = normalize_tool_calls(getattr(chunk, "tool_call_chunks", None))
             yield GenerateResult(
-                content=content,
+                content=content if isinstance(content, str) else "",
                 model=self.config.model_name,
                 usage=UsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0),
-                finish_reason="incomplete",
+                finish_reason="tool_calls" if tool_calls else "incomplete",
+                tool_calls=tool_calls,
                 latency_ms=0,
             )
 

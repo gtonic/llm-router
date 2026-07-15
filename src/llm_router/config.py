@@ -7,6 +7,8 @@ standard ``yaml.safe_load`` helpers.
 
 from __future__ import annotations
 
+import os
+import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -14,6 +16,9 @@ from typing import Any, Literal
 
 import yaml
 from pydantic_settings import BaseSettings
+
+# Pattern to match ${VAR_NAME} placeholders in strings
+_ENV_VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 # ───────────────────────────────────────────
 # Enums
@@ -267,6 +272,24 @@ class GatewaySettings(BaseSettings):
     }
 
     # ───────────────────────────────────────────
+    # Environment variable substitution
+    # ───────────────────────────────────────────
+
+    @staticmethod
+    def _substitute_env_vars(value: Any) -> Any:
+        """Recursively substitute ${VAR_NAME} placeholders in strings with environment variable values."""
+        if isinstance(value, str):
+            def replacer(match: re.Match) -> str:
+                var_name = match.group(1)
+                return os.environ.get(var_name, match.group(0))
+            return _ENV_VAR_PATTERN.sub(replacer, value)
+        elif isinstance(value, dict):
+            return {k: GatewaySettings._substitute_env_vars(v) for k, v in value.items()}
+        elif isinstance(value, list):
+            return [GatewaySettings._substitute_env_vars(item) for item in value]
+        return value
+
+    # ───────────────────────────────────────────
     # YAML / File helpers
     # ───────────────────────────────────────────
 
@@ -298,7 +321,9 @@ class GatewaySettings(BaseSettings):
         for f in sorted(path.glob("*.yaml")) + sorted(path.glob("*.yml")):
             with open(f, encoding="utf-8") as fh:
                 for raw in yaml.safe_load(fh) or []:
-                    models.append(ModelBackendConfig.from_dict(raw))
+                    # Substitute environment variables in the raw YAML data
+                    resolved = self._substitute_env_vars(raw)
+                    models.append(ModelBackendConfig.from_dict(resolved))
         return models
 
     def save_models_to_yaml(

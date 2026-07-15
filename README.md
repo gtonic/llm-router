@@ -142,12 +142,15 @@ docker build -t llm-router:latest .
 # Run single container
 docker run -d --name llm-router \
   -p 8000:8000 \
-  -e OTEL_ENABLED=false \
+  -e ROUTER_OTELP_ENABLED=false \
   -e APP_DEBUG=true \
   llm-router:latest
 
 # With Docker Compose (App + Jaeger)
 docker compose up -d
+
+# With Monitoring Stack (Jaeger + Prometheus + Grafana)
+docker compose -f docker-compose.yml -f docker-compose.monitoring.yml up -d
 
 # View logs
 docker compose logs -f app
@@ -181,7 +184,9 @@ curl http://localhost:8000/health
 ```
 http://localhost:8000/docs        # Swagger UI
 http://localhost:8000/redoc       # ReDoc
-http://localhost:16686            # Jaeger Tracing UI (docker compose)
+http://localhost:16686            # Jaeger Tracing UI
+http://localhost:3000             # Grafana Dashboard (admin/admin)
+http://localhost:9090             # Prometheus Metrics
 ```
 
 ## License

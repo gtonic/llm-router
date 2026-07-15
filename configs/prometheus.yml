@@ -1,0 +1,26 @@
+# ============================================
+# Prometheus Configuration for LLM Router
+# ============================================
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'llm-router'
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+    static_configs:
+      - targets: ['app:8000']
+        labels:
+          service: 'llm-router'
+          environment: 'local'
+
+  - job_name: 'jaeger'
+    static_configs:
+      - targets: ['jaeger:14269']  # Jaeger metrics endpoint
+        labels:
+          service: 'jaeger'
+
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

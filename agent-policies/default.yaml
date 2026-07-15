@@ -29,7 +29,7 @@ rules:
     description: "High-complexity analysis tasks use remote models"
     conditions:
       complexity: high
-    target_model: gpt4o
+    target_model: gpt-5.6-luna
     priority: 30
 
   # ── Default fallback → remote model ──────────────────────
@@ -37,5 +37,5 @@ rules:
     name: Default Remote
     description: "Fallback to remote model for unmatched requests"
     conditions: {}
-    target_model: gpt4o
+    target_model: gpt-5.6-luna
     priority: 0

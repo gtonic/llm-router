@@ -25,6 +25,7 @@ def _make_engine(**overrides):
     pii_filter = MagicMock()
     abuse_filter = MagicMock()
     content_safety = MagicMock()
+    pii_filter.redact = False
 
     for name, obj in {
         "pool": pool,
@@ -78,6 +79,7 @@ def make_router(**overrides):
     pii_filter = MagicMock()
     abuse_filter = MagicMock()
     content_safety = MagicMock()
+    pii_filter.redact = False
 
     kw = {
         "pool": pool,
@@ -248,6 +250,18 @@ class TestGenerate:
         # Pool.get should be called with the explicit model, not the routed one
         engine.pool.get.assert_called_with("override-model")
 
+    def test_generate_router_auto_uses_routed_model(self):
+        engine = make_router()
+        self._mock_rate_ok(engine)
+        self._mock_abuse_safe(engine)
+        self._mock_pii_no_pii(engine)
+        self._mock_policy_route(engine, model_id="routed-model")
+        self._mock_backend_success(engine)
+
+        asyncio.run(engine.generate([{"role": "user", "content": "Hi"}], model="router-auto"))
+
+        engine.pool.get.assert_called_with("routed-model")
+
     def test_generate_uses_routed_model_when_no_explicit(self):
         engine = make_router()
         self._mock_rate_ok(engine)
@@ -376,6 +390,24 @@ class TestGenerateStream:
         assert len(chunks) == 2
         assert chunks[0].content == "chunk1"
         assert chunks[1].content == "chunk2"
+
+    def test_stream_skips_empty_content_chunks(self):
+        engine = make_router()
+        self._mock_rate_ok(engine)
+        self._mock_abuse_safe(engine)
+        self._mock_pii_no_pii(engine)
+        self._mock_policy_route(engine)
+
+        async def _stream(messages):
+            yield self._stream_result("")
+            yield self._stream_result("visible")
+            yield self._stream_result("")
+
+        engine.pool.get.return_value.generate_stream = _stream
+
+        chunks = asyncio.run(self._consume_stream(engine))
+
+        assert [chunk.content for chunk in chunks] == ["visible"]
 
     def test_stream_calls_rate_limit(self):
         engine = make_router()

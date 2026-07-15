@@ -70,6 +70,7 @@ def make_test_client():
         ("email", "Email Address"),
     ]
     pii_filter.redact = True
+    pii_filter.redact_text = lambda text: text
 
     engine = RouterPolicyEngine(
         pool=pool,
@@ -256,6 +257,15 @@ class TestChatCompletions:
         assert resp.status_code == 200
         assert resp.json()["choices"][0]["message"]["role"] == "assistant"
 
+    def test_non_streaming_text_content_parts(self):
+        """OpenAI content-part arrays should be accepted for text messages."""
+        client = make_test_client()
+        resp = self._post_chat(
+            client,
+            messages=[{"role": "user", "content": [{"type": "text", "text": "Hello!"}]}],
+        )
+        assert resp.status_code == 200
+
     def test_non_streaming_with_user_id(self):
         """user_id parameter should be accepted without error."""
         client = make_test_client()
@@ -345,7 +355,7 @@ class TestModelsEndpoint:
         assert data["object"] == "list"
 
     def test_list_models_empty_pool(self):
-        """Should return empty list when no models available."""
+        """Should retain the logical auto model when no backends are available."""
         from llm_router.server.app import router_engine
 
         if router_engine:
@@ -354,7 +364,7 @@ class TestModelsEndpoint:
         resp = self._get_models(client)
         assert resp.status_code == 200
         data = resp.json()
-        assert data["data"] == []
+        assert [model["id"] for model in data["data"]] == ["router-auto"]
 
     def test_list_models_multiple_models(self):
         """Should return all registered models."""

@@ -4,10 +4,28 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 
 import yaml
 
 from llm_router.config import ModelBackendConfig
+
+# Pattern to match ${VAR_NAME} placeholders in strings
+_ENV_VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def _substitute_env_vars(value):
+    """Recursively substitute ${VAR_NAME} placeholders in strings with environment variable values."""
+    if isinstance(value, str):
+        def replacer(match):
+            var_name = match.group(1)
+            return os.environ.get(var_name, match.group(0))
+        return _ENV_VAR_PATTERN.sub(replacer, value)
+    elif isinstance(value, dict):
+        return {k: _substitute_env_vars(v) for k, v in value.items()}
+    elif isinstance(value, list):
+        return [_substitute_env_vars(item) for item in value]
+    return value
 from llm_router.pool.base import HealthStatus, ModelBackend
 from llm_router.pool.local import LlamaCPPBackend
 from llm_router.pool.remote import RemoteBackend
@@ -36,7 +54,9 @@ class ModelPool:
         if not isinstance(configs, list):
             configs = [configs]
         for cfg_dict in configs:
-            cfg = ModelBackendConfig(**cfg_dict)
+            # Substitute environment variables in the config
+            resolved = _substitute_env_vars(cfg_dict)
+            cfg = ModelBackendConfig(**resolved)
             if cfg.enabled:
                 backend = self._create_backend(cfg)
                 self._backends[cfg.id] = backend

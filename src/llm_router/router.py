@@ -21,6 +21,42 @@ from llm_router.routing.round_robin import RoundRobinPolicy
 logger = logging.getLogger("llm-router")
 
 
+def _message_text(message: dict) -> str:
+    """Extract text from OpenAI string or content-part message formats."""
+    content = message.get("content", "")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(
+            part.get("text", "")
+            for part in content
+            if isinstance(part, dict) and isinstance(part.get("text"), str)
+        )
+    return ""
+
+
+def _redact_messages(messages: list[dict], pii_filter: PiiFilter) -> list[dict]:
+    """Redact PII in string and OpenAI content-part messages before inference."""
+    redacted = []
+    for message in messages:
+        content = message.get("content")
+        if isinstance(content, str):
+            message = {**message, "content": pii_filter.redact_text(content)}
+        elif isinstance(content, list):
+            parts = [
+                {
+                    **part,
+                    "text": pii_filter.redact_text(part["text"]),
+                }
+                if isinstance(part, dict) and isinstance(part.get("text"), str)
+                else part
+                for part in content
+            ]
+            message = {**message, "content": parts}
+        redacted.append(message)
+    return redacted
+
+
 class RouterPolicyEngine:
     """Main router that orchestrates guardrails, routing, and model calls.
 
@@ -67,6 +103,7 @@ class RouterPolicyEngine:
         user_id: str | None = None,
         api_key: str | None = None,
         model: str | None = None,
+        tools: list[dict] | None = None,
     ) -> GenerateResult:
         """Run a non-streaming completion with full guardrails and tracing."""
         request_id = f"{user_id or 'anonymous'}:{int(time.time())}"
@@ -78,10 +115,11 @@ class RouterPolicyEngine:
             raise Exception(f"Rate limited: {rate_result.error}")
 
         # 2. Input PII filter
-        full_text = " ".join(msg.get("content", "") for msg in messages)
+        full_text = " ".join(_message_text(msg) for msg in messages)
         pii_result = self.pii_filter.check(full_text, mode="input")
         if pii_result.has_pii:
             logger.info("[%s] PII detected: %s", request_id, pii_result.patterns)
+            messages = _redact_messages(messages, self.pii_filter)
 
         # 3. Input abuse filter
         abuse_result = self.abuse_filter.check(full_text)
@@ -105,12 +143,18 @@ class RouterPolicyEngine:
         else:
             routing_result = await self.policy_matcher.route(messages)
 
-        selected_model = model or routing_result.model_id or self.default_model
+        requested_model = None if model in {None, "auto", "router-auto"} else model
+        selected_model = requested_model or routing_result.model_id or self.default_model
+        if tools and requested_model is None:
+            selected_model = self.default_model
 
         # 5. Model call
         try:
             backend = self.pool.get(selected_model)
-            result = await backend.generate(messages)
+            backend_kwargs = {"tools": tools} if tools else {}
+            result = await backend.generate(messages, **backend_kwargs)
+            if self.pii_filter.redact:
+                result.content = self.pii_filter.redact_text(result.content)
             logger.info(
                 "[%s] Request complete: model=%s tokens=%d latency=%.0fms",
                 request_id,
@@ -129,6 +173,7 @@ class RouterPolicyEngine:
         user_id: str | None = None,
         api_key: str | None = None,
         model: str | None = None,
+        tools: list[dict] | None = None,
     ) -> AsyncIterator[GenerateResult]:
         """Run a streaming completion with full guardrails and tracing."""
         request_id = f"{user_id or 'anonymous'}:{int(time.time())}"
@@ -139,7 +184,7 @@ class RouterPolicyEngine:
             raise Exception(f"Rate limited: {rate_result.error}")
 
         # 2. Input PII filter
-        full_text = " ".join(msg.get("content", "") for msg in messages)
+        full_text = " ".join(_message_text(msg) for msg in messages)
         self.pii_filter.check(full_text, mode="input")
 
         # 3. Input abuse filter
@@ -158,9 +203,14 @@ class RouterPolicyEngine:
         else:
             routing_result = await self.policy_matcher.route(messages)
 
-        selected_model = model or routing_result.model_id or self.default_model
+        requested_model = None if model in {None, "auto", "router-auto"} else model
+        selected_model = requested_model or routing_result.model_id or self.default_model
+        if tools and requested_model is None:
+            selected_model = self.default_model
 
         # 5. Model call
         backend = self.pool.get(selected_model)
-        async for chunk in backend.generate_stream(messages):
-            yield chunk
+        backend_kwargs = {"tools": tools} if tools else {}
+        async for chunk in backend.generate_stream(messages, **backend_kwargs):
+            if chunk.content:
+                yield chunk

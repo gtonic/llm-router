@@ -31,9 +31,18 @@ def _text_has_pii(text: str) -> bool:
 def _classify_task_type(text: str) -> str:
     """Classify the task type from prompt content."""
     text_lower = text.lower()
-    code_kw = {"def ", "function", "class ", "import ", "const ", "let ", "var "}
-    analysis_kw = {"analyze", "compare", "evaluate", "summarize", "explain", "why", "how"}
-    creative_kw = {"write", "create", "design", "compose", "story", "poem"}
+    code_kw = {
+        "def ", "function", "class ", "import ", "const ", "let ", "var ",
+        "code", "python", "javascript", "programm", "funktion", "implement",
+    }
+    analysis_kw = {
+        "analyze", "compare", "evaluate", "summarize", "explain", "why", "how",
+        "analysiere", "vergleiche", "bewerte", "zusammenfassung", "erkläre", "warum",
+    }
+    creative_kw = {
+        "write", "create", "design", "compose", "story", "poem",
+        "schreibe", "erstelle", "entwirf", "geschichte", "gedicht",
+    }
 
     if any(kw in text_lower for kw in code_kw):
         return "code"
@@ -89,6 +98,12 @@ class PolicyMatcher(PolicyBase):
             elif key == "task_type":
                 task_type = _classify_task_type(full_text)
                 if value != task_type:
+                    return False
+            elif key == "complexity":
+                from llm_router.routing.complexity import ComplexityDetector
+
+                complexity = ComplexityDetector().analyze(messages).level
+                if value != complexity:
                     return False
             elif key == "privacy":
                 # Placeholder — full implementation in guardrails/
