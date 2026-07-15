@@ -1,0 +1,150 @@
+name: llm-router-monitor
+description: Monitor the LLM Router via its self-describing manifest
+version: "1.0.0"
+
+# ── Discovery ──────────────────────────────────────────────────
+discovery:
+  method: http
+  url: "{{ROUTER_URL}}/system/manifest"
+  description: "Fetch the system manifest to discover capabilities, health, and endpoints"
+
+# ── Tools ──────────────────────────────────────────────────────
+tools:
+  - name: check_router_health
+    description: "Check LLM Router health via /system/health"
+    method: GET
+    url: "{{ROUTER_URL}}/system/health"
+    interval: 30s
+    returns:
+      - status: healthy | degraded
+      - backends: Record<string, {healthy, latency_ms, error}>
+      - routing_strategy: string
+      - guardrails: object
+      - policies_loaded: number
+
+  - name: get_router_manifest
+    description: "Fetch complete system self-description"
+    method: GET
+    url: "{{ROUTER_URL}}/system/manifest"
+    on_startup: true
+    returns:
+      - system: object
+      - metadata: object
+      - routing: object
+      - guardrails: string[]
+      - health: object
+      - api_endpoints: object[]
+      - log_patterns: object[]
+      - lifecycle: object
+      - metrics_definitions: object[]
+      - monitoring_thresholds: object
+      - bug_reporting: object
+
+  - name: get_router_metrics
+    description: "Get current metrics snapshot"
+    method: GET
+    url: "{{ROUTER_URL}}/system/metrics"
+    interval: 60s
+    returns:
+      - backends: Record<string, {healthy, latency_ms}>
+      - routing_strategy: string
+      - policies_count: number
+      - prometheus_enabled: boolean
+      - prometheus_endpoint: string
+
+  - name: get_router_capabilities
+    description: "Get allowed lifecycle actions"
+    method: GET
+    url: "{{ROUTER_URL}}/system/capabilities"
+    on_startup: true
+    returns:
+      - allowed_actions: object[]
+      - lifecycle: object
+
+  - name: reload_router_config
+    description: "Reload policies and models from disk (requires auth)"
+    method: POST
+    url: "{{ROUTER_URL}}/admin/reload"
+    auth_required: true
+    auth_type: api_key
+    returns:
+      - status: string
+      - policies: number
+
+# ── Alerts ─────────────────────────────────────────────────────
+alerts:
+  - name: backend_unhealthy
+    condition: "health.backends[*].healthy == false"
+    severity: warning
+    action: alert
+    description: "One or more model backends are unhealthy"
+
+  - name: high_error_rate
+    condition: "metrics.error_rate_percent > 10.0"
+    severity: critical
+    action: alert_and_restart
+    description: "Error rate exceeds critical threshold"
+
+  - name: high_latency
+    condition: "metrics.router_latency_ms > 1000"
+    severity: warning
+    action: alert
+    description: "Routing latency exceeds warning threshold"
+
+  - name: model_switch_flood
+    condition: "metrics.model_switch_count > 50"
+    severity: critical
+    action: alert
+    description: "Excessive model switching detected"
+
+# ── Log Pattern Matching ───────────────────────────────────────
+log_patterns:
+  - name: model_unavailable
+    regex: "model.*unavailable|model.*not.*found|404.*model"
+    severity: warning
+    action: alert
+
+  - name: routing_fallback
+    regex: "fallback|failover|switch.*to"
+    severity: warning
+    action: log_and_alert
+
+  - name: upstream_error
+    regex: "upstream.*error|connection.*refused|502|503|504"
+    severity: critical
+    action: alert_and_restart
+
+  - name: memory_warning
+    regex: "memory.*high|OOM|out.*of.*memory|heap.*error"
+    severity: critical
+    action: alert_and_restart
+
+  - name: rate_limit
+    regex: "rate.*limit|429|too.*many.*requests"
+    severity: warning
+    action: alert
+
+  - name: pii_detected
+    regex: "PII detected|pii.*redact"
+    severity: info
+    action: log_only
+
+  - name: abuse_blocked
+    regex: "Abuse detected|abuse.*blocked"
+    severity: warning
+    action: alert
+
+  - name: config_reload
+    regex: "config.*reloaded|reload.*policies"
+    severity: info
+    action: log_only
+
+# ── Configuration ──────────────────────────────────────────────
+config:
+  health_check_interval: 30s
+  metrics_interval: 60s
+  log_poll_interval: 10s
+  max_restarts: 3
+  restart_window: 5m
+  secret_redaction: true
+  maker_checker: true

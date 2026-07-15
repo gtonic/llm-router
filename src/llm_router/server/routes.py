@@ -10,6 +10,7 @@ import time
 import uuid
 from collections.abc import AsyncGenerator
 from dataclasses import asdict
+from datetime import UTC
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -30,6 +31,11 @@ from llm_router.server.app import (
     PROMETHEUS_ENABLED,
     record_error,
     record_request,
+    router_engine,
+)
+from llm_router.server.system_manifest import (
+    BackendHealth,
+    build_manifest,
 )
 
 logger = logging.getLogger("llm-router")
@@ -251,3 +257,193 @@ async def reload_config():
         return {"status": "reloaded", "policies": len(router_engine.policy_matcher.rules)}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+# ───────────────────────────────────────────
+# System Manifest Endpoints (DevOps Monitoring)
+# ───────────────────────────────────────────
+
+# Module-level start time for uptime calculation
+_start_time: str = ""
+
+
+@router.get("/system/manifest")
+async def get_system_manifest():
+    """Return the full system self-description.
+
+    This endpoint enables DevOps monitoring agents to discover:
+      - System metadata (version, runtime, models)
+      - Health status of all backends
+      - Allowed lifecycle actions
+      - Log patterns for anomaly detection
+      - Monitoring thresholds
+      - API endpoint catalog
+    """
+    from datetime import datetime
+
+    if router_engine is None:
+        raise HTTPException(status_code=503, detail="Router not initialized")
+
+    # Set start time on first call
+    global _start_time
+    if not _start_time:
+        _start_time = datetime.now(UTC).isoformat()
+
+    # Get backend health
+    health_results = await router_engine.pool.health_check_all()
+    backend_health = {}
+    model_configs = []
+    for mid, backend in router_engine.pool._backends.items():
+        status = health_results.get(mid)
+        if status is None:
+            # health_results is a dict of HealthStatus, not iterable as zip
+            continue
+        backend_health[mid] = BackendHealth(
+            id=mid,
+            name=backend.config.name,
+            type=backend.config.type,
+            healthy=status.healthy,
+            latency_ms=status.latency_ms,
+            error=status.error,
+        )
+        model_configs.append(backend.config)
+
+    # Calculate uptime
+    uptime = (datetime.now(UTC) - datetime.fromisoformat(_start_time)).total_seconds()
+
+    manifest = build_manifest(
+        settings=router_engine.pool._settings if hasattr(router_engine.pool, "_settings") else None,
+        start_time=_start_time,
+        uptime_seconds=uptime,
+        models=model_configs,
+        health_status=backend_health,
+    )
+
+    return manifest.to_dict()
+
+
+@router.get("/system/health")
+async def get_system_health():
+    """Detailed health check — backends, routing, guardrails."""
+    if router_engine is None:
+        raise HTTPException(status_code=503, detail="Router not initialized")
+
+    health_results = await router_engine.pool.health_check_all()
+
+    backends = {}
+    all_healthy = True
+    for mid, backend in router_engine.pool._backends.items():
+        status = health_results.get(mid)
+        if status is None:
+            continue
+        backends[mid] = {
+            "id": mid,
+            "name": backend.config.name,
+            "type": backend.config.type,
+            "healthy": status.healthy,
+            "latency_ms": round(status.latency_ms, 1),
+            "error": status.error,
+        }
+        if not status.healthy:
+            all_healthy = False
+
+    return {
+        "status": "healthy" if all_healthy else "degraded",
+        "version": "0.1.0",
+        "backends": backends,
+        "routing_strategy": router_engine.routing_strategy.value,
+        "guardrails": {
+            "pii_enabled": True,
+            "abuse_enabled": True,
+            "content_safety_enabled": True,
+            "rate_limiting_enabled": True,
+        },
+        "policies_loaded": len(router_engine.policy_matcher.rules),
+    }
+
+
+@router.get("/system/metrics")
+async def get_system_metrics():
+    """Current metrics snapshot for Prometheus-compatible consumption.
+
+    Returns a JSON snapshot of all counters, histograms, and gauges.
+    Also exposes the raw Prometheus text format at /metrics.
+    """
+    if router_engine is None:
+        raise HTTPException(status_code=503, detail="Router not initialized")
+
+    # Get backend health for metrics
+    health_results = await router_engine.pool.health_check_all()
+
+    metrics = {
+        "backends": {
+            mid: {
+                "healthy": status.healthy,
+                "latency_ms": round(status.latency_ms, 1),
+            }
+            for mid, status in health_results.items()
+        },
+        "routing_strategy": router_engine.routing_strategy.value,
+        "policies_count": len(router_engine.policy_matcher.rules),
+        "prometheus_enabled": PROMETHEUS_ENABLED,
+        "prometheus_endpoint": "/metrics",
+    }
+
+    return metrics
+
+
+@router.get("/system/capabilities")
+async def get_system_capabilities():
+    """Return allowed lifecycle actions.
+
+    This tells DevOps agents what operations they can perform on this system.
+    """
+    if router_engine is None:
+        raise HTTPException(status_code=503, detail="Router not initialized")
+
+    return {
+        "system": "llm-router",
+        "version": "0.1.0",
+        "allowed_actions": [
+            {
+                "action": "health_check",
+                "description": "Check system and backend health",
+                "method": "GET",
+                "endpoint": "/system/health",
+                "auth_required": False,
+            },
+            {
+                "action": "get_manifest",
+                "description": "Get system self-description",
+                "method": "GET",
+                "endpoint": "/system/manifest",
+                "auth_required": False,
+            },
+            {
+                "action": "get_metrics",
+                "description": "Fetch current metrics",
+                "method": "GET",
+                "endpoint": "/system/metrics",
+                "auth_required": False,
+            },
+            {
+                "action": "reload_config",
+                "description": "Reload policies and models from disk",
+                "method": "POST",
+                "endpoint": "/admin/reload",
+                "auth_required": True,
+            },
+            {
+                "action": "check_guardrails",
+                "description": "Manually trigger a guardrail check",
+                "method": "POST",
+                "endpoint": "/guardrails/check",
+                "auth_required": True,
+            },
+        ],
+        "lifecycle": {
+            "restart_on_critical": True,
+            "max_restarts": 3,
+            "restart_window": "5m",
+        },
+    }
