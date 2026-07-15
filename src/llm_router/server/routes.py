@@ -269,7 +269,7 @@ _start_time: str = ""
 
 @router.get("/system/manifest")
 async def get_system_manifest():
-    """Return the full system self-description (Dragonbook-style manifest).
+    """Return the full system self-description.
 
     This endpoint enables DevOps monitoring agents to discover:
       - System metadata (version, runtime, models)
@@ -324,10 +324,7 @@ async def get_system_manifest():
 
 @router.get("/system/health")
 async def get_system_health():
-    """Detailed health check — backends, routing, guardrails.
-
-    Analogous to Dragonbook's /api/agents/health but for the LLM Router.
-    """
+    """Detailed health check — backends, routing, guardrails."""
     if router_engine is None:
         raise HTTPException(status_code=503, detail="Router not initialized")
 
@@ -397,7 +394,7 @@ async def get_system_metrics():
 
 @router.get("/system/capabilities")
 async def get_system_capabilities():
-    """Return allowed lifecycle actions (Dragonbook-style allowedNextActions).
+    """Return allowed lifecycle actions.
 
     This tells DevOps agents what operations they can perform on this system.
     """

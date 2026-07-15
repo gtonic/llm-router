@@ -1,10 +1,9 @@
 """System manifest — self-describing definition for DevOps monitoring.
 
-Follows the Dragonbook Agent pattern: every system exposes its capabilities,
-health, metrics, log patterns, and allowed actions via a structured manifest.
-
-This enables automated monitoring agents (e.g. Pi-based DevOps agents) to
-discover, understand, and operate on the system without manual configuration.
+Every system exposes its capabilities, health, metrics, log patterns, and
+allowed actions via a structured manifest. This enables automated monitoring
+agents (e.g. Pi-based DevOps agents) to discover, understand, and operate on
+the system without manual configuration.
 
 Endpoints:
   GET /system/manifest    — Full system definition (metadata + capabilities)
@@ -50,7 +49,7 @@ class BackendHealth:
 class SystemManifest:
     """Complete self-describing definition of the LLM Router system.
 
-    Mirrors the Dragonbook Agent pattern:
+    Structured sections:
       - metadata       → harness, version, runtime info
       - health         → liveness + backend health
       - capabilities   → allowedNextActions / lifecycle

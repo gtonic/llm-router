@@ -1,5 +1,5 @@
 name: llm-router-monitor
-description: Monitor the LLM Router via its self-describing Dragonbook-style manifest
+description: Monitor the LLM Router via its self-describing manifest
 version: "1.0.0"
 
 # ── Discovery ──────────────────────────────────────────────────

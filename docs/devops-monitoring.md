@@ -2,7 +2,7 @@
 
 ## Overview
 
-The LLM Router exposes a self-describing system manifest following the **Dragonbook Agent pattern**.
+The LLM Router exposes a self-describing system manifest.
 This enables automated DevOps agents (e.g. Pi-based monitoring agents) to discover, understand,
 and operate on the system without manual configuration.
 
