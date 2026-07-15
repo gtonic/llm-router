@@ -26,7 +26,7 @@ RUN pip install --no-compile --upgrade pip && \
 # Copy source and run (optional) tests
 COPY src/ src/
 COPY tests/ tests/
-RUN python -m pytest tests/ -q --tb=short 2>&1 | tail -20 || true
+RUN python -m pytest tests/ -q --tb=short
 
 # ── 2. Production stage ────────────────────────────────────────────
 FROM python:3.12-slim AS runtime
