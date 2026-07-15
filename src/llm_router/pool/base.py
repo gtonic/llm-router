@@ -22,14 +22,61 @@ def normalize_tool_calls(tool_calls: list[dict] | None) -> list[dict] | None:
         arguments = call.get("args", call.get("arguments", {}))
         if not isinstance(arguments, str):
             arguments = json.dumps(arguments, separators=(",", ":"))
-        normalized.append(
+        normalized_call = {
+            "id": call.get("id") or f"call_{index}",
+            "type": "function",
+            "function": {"name": call.get("name") or "", "arguments": arguments},
+        }
+        if "index" in call:
+            normalized_call["_stream_index"] = call["index"]
+        normalized.append(normalized_call)
+    return normalized
+
+
+def merge_tool_calls(existing: list[dict], incoming: list[dict] | None) -> None:
+    """Merge streamed tool-call fragments by explicit stream index when available."""
+    if not incoming:
+        return
+    for position, call in enumerate(incoming):
+        stream_index = call.get("_stream_index")
+        if stream_index is None:
+            target = existing[position] if position < len(existing) else None
+        else:
+            target = next(
+                (item for item in existing if item.get("_stream_index") == stream_index),
+                None,
+            )
+        if target is None:
+            existing.append(call)
+            continue
+        target_function = target.setdefault("function", {})
+        incoming_function = call.get("function", {})
+        if not target.get("id") or target["id"] == f"call_{position}":
+            target["id"] = call.get("id", target.get("id"))
+        if incoming_function.get("name"):
+            target_function["name"] = incoming_function["name"]
+        target_function["arguments"] += incoming_function.get("arguments", "")
+
+
+def to_langchain_tool_calls(tool_calls: list[dict] | None) -> list[dict]:
+    """Convert OpenAI tool calls from a follow-up request to LangChain form."""
+    converted = []
+    for call in tool_calls or []:
+        function = call.get("function", {})
+        arguments = function.get("arguments", "{}")
+        try:
+            arguments = json.loads(arguments) if isinstance(arguments, str) else arguments
+        except json.JSONDecodeError:
+            arguments = {}
+        converted.append(
             {
-                "id": call.get("id") or f"call_{index}",
-                "type": "function",
-                "function": {"name": call.get("name", ""), "arguments": arguments},
+                "name": function.get("name", ""),
+                "args": arguments,
+                "id": call.get("id", ""),
+                "type": "tool_call",
             }
         )
-    return normalized
+    return converted
 
 
 @dataclass

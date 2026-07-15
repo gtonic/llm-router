@@ -6,7 +6,14 @@ from abc import ABC
 
 import pytest
 
-from llm_router.pool.base import GenerateResult, HealthStatus, ModelBackend, UsageInfo
+from llm_router.pool.base import (
+    GenerateResult,
+    HealthStatus,
+    ModelBackend,
+    UsageInfo,
+    merge_tool_calls,
+    normalize_tool_calls,
+)
 
 
 class TestUsageInfo:
@@ -41,6 +48,65 @@ class TestGenerateResult:
         assert r.tool_calls is None
         assert r.latency_ms == 0.0
 
+
+class TestToolCallMerging:
+    def test_merges_streamed_fragments(self):
+        calls = []
+        merge_tool_calls(
+            calls,
+            [
+                {
+                    "id": "call_abc",
+                    "type": "function",
+                    "function": {"name": "bash", "arguments": "{\"command\":"},
+                }
+            ],
+        )
+        merge_tool_calls(
+            calls,
+            [
+                {
+                    "id": "call_0",
+                    "type": "function",
+                    "function": {"name": "", "arguments": "\"pwd\"}"},
+                }
+            ],
+        )
+
+        assert calls == [
+            {
+                "id": "call_abc",
+                "type": "function",
+                "function": {"name": "bash", "arguments": "{\"command\":\"pwd\"}"},
+            }
+        ]
+
+    def test_keeps_parallel_tool_calls_separate_by_stream_index(self):
+        calls = []
+        merge_tool_calls(
+            calls,
+            normalize_tool_calls(
+                [
+                    {
+                        "index": 0,
+                        "id": "call_skill",
+                        "name": "skill_view",
+                        "args": '{"name":"llm-wiki"}',
+                    },
+                    {
+                        "index": 1,
+                        "id": "call_code",
+                        "name": "execute_code",
+                        "args": '{"code":"print(1)"}',
+                    },
+                ]
+            ),
+        )
+
+        assert [call["function"] for call in calls] == [
+            {"name": "skill_view", "arguments": '{"name":"llm-wiki"}'},
+            {"name": "execute_code", "arguments": '{"code":"print(1)"}'},
+        ]
     def test_full(self):
         r = GenerateResult(
             content="world",

@@ -409,6 +409,35 @@ class TestGenerateStream:
 
         assert [chunk.content for chunk in chunks] == ["visible"]
 
+    def test_stream_keeps_tool_call_chunks_without_content(self):
+        engine = make_router()
+        self._mock_rate_ok(engine)
+        self._mock_abuse_safe(engine)
+        self._mock_pii_no_pii(engine)
+        self._mock_policy_route(engine)
+
+        async def _stream(messages):
+            yield GenerateResult(
+                content="",
+                model="test-model",
+                usage=UsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0),
+                finish_reason="tool_calls",
+                tool_calls=[
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "bash", "arguments": "{\"command\":\"pwd\"}"},
+                    }
+                ],
+            )
+
+        engine.pool.get.return_value.generate_stream = _stream
+
+        chunks = asyncio.run(self._consume_stream(engine))
+
+        assert len(chunks) == 1
+        assert chunks[0].tool_calls[0]["function"]["name"] == "bash"
+
     def test_stream_calls_rate_limit(self):
         engine = make_router()
         self._mock_rate_ok(engine)

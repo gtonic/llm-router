@@ -104,6 +104,7 @@ class RouterPolicyEngine:
         api_key: str | None = None,
         model: str | None = None,
         tools: list[dict] | None = None,
+        max_tokens: int | None = None,
     ) -> GenerateResult:
         """Run a non-streaming completion with full guardrails and tracing."""
         request_id = f"{user_id or 'anonymous'}:{int(time.time())}"
@@ -152,6 +153,8 @@ class RouterPolicyEngine:
         try:
             backend = self.pool.get(selected_model)
             backend_kwargs = {"tools": tools} if tools else {}
+            if max_tokens is not None:
+                backend_kwargs["max_tokens"] = max_tokens
             result = await backend.generate(messages, **backend_kwargs)
             if self.pii_filter.redact:
                 result.content = self.pii_filter.redact_text(result.content)
@@ -174,6 +177,7 @@ class RouterPolicyEngine:
         api_key: str | None = None,
         model: str | None = None,
         tools: list[dict] | None = None,
+        max_tokens: int | None = None,
     ) -> AsyncIterator[GenerateResult]:
         """Run a streaming completion with full guardrails and tracing."""
         request_id = f"{user_id or 'anonymous'}:{int(time.time())}"
@@ -211,6 +215,8 @@ class RouterPolicyEngine:
         # 5. Model call
         backend = self.pool.get(selected_model)
         backend_kwargs = {"tools": tools} if tools else {}
+        if max_tokens is not None:
+            backend_kwargs["max_tokens"] = max_tokens
         async for chunk in backend.generate_stream(messages, **backend_kwargs):
-            if chunk.content:
+            if chunk.content or chunk.tool_calls:
                 yield chunk

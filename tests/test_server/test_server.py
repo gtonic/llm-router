@@ -122,6 +122,31 @@ def make_test_client():
     return TestClient(create_app())
 
 
+def make_tool_streaming_client():
+    client = make_test_client()
+    import llm_router.server.app as app_mod
+
+    async def _tool_stream(*args, **kwargs):
+        from llm_router.pool.base import GenerateResult, UsageInfo
+
+        yield GenerateResult(
+            content="",
+            model="test-model",
+            usage=UsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0),
+            finish_reason="tool_calls",
+            tool_calls=[
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "bash", "arguments": "{\"command\":\"pwd\"}"},
+                }
+            ],
+        )
+
+    app_mod.router_engine.pool.get.return_value.generate_stream = _tool_stream
+    return client
+
+
 # ── App Factory Tests ──────────────────────────────────────────────
 
 
@@ -244,6 +269,17 @@ class TestChatCompletions:
         resp = self._post_chat(client, temperature=0.8, max_tokens=100)
         assert resp.status_code == 200
 
+    def test_non_streaming_forwards_max_tokens_to_backend(self):
+        client = make_test_client()
+        resp = self._post_chat(client, max_tokens=8192)
+
+        assert resp.status_code == 200
+        import llm_router.server.app as app_mod
+
+        backend_call = app_mod.router_engine.pool.get.return_value.generate.await_args
+        assert backend_call is not None
+        assert backend_call.kwargs["max_tokens"] == 8192
+
     def test_non_streaming_system_message(self):
         """System messages should be passed through."""
         client = make_test_client()
@@ -285,6 +321,25 @@ class TestChatCompletions:
         assert resp.status_code == 200
         # Streaming returns a StreamingResponse
         assert "text/event-stream" in resp.headers.get("content-type", "")
+
+    def test_streaming_tool_call_preserves_structured_delta(self):
+        """Streaming tool calls must survive even when their content is empty."""
+        client = make_tool_streaming_client()
+        resp = self._post_chat(
+            client,
+            stream=True,
+            tools=[
+                {
+                    "type": "function",
+                    "function": {"name": "bash", "parameters": {"type": "object"}},
+                }
+            ],
+        )
+
+        assert resp.status_code == 200
+        assert '"tool_calls"' in resp.text
+        assert '"name":"bash"' in resp.text
+        assert '"finish_reason":"tool_calls"' in resp.text
 
     def test_streaming_with_multiple_messages(self):
         """Streaming should handle conversation history."""

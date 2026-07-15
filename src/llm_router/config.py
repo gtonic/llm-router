@@ -224,8 +224,8 @@ class GatewaySettings(BaseSettings):
 
     Example .env::
 
-        ROUTER_DEFAULT_STRATEGY=policy
-        ROUTER_DEFAULT_MODEL=llama-3.1-8b
+        ROUTER_DEFAULT_STRATEGY=complexity
+        ROUTER_DEFAULT_MODEL=llama-local
         ROUTER_OTLP_ENABLED=true
         ROUTER_OTLP_ENDPOINT=http://localhost:4318/v1/traces
         ROUTER_RATE_LIMIT_RPM=120
@@ -233,8 +233,8 @@ class GatewaySettings(BaseSettings):
     """
 
     # ── Core ──────────────────────────────────
-    default_strategy: RoutingStrategy = RoutingStrategy.POLICY
-    default_model: str = "llama-3.1-8b"
+    default_strategy: RoutingStrategy = RoutingStrategy.COMPLEXITY
+    default_model: str = "llama-local"
 
     # ── Model Backends ────────────────────────
     models_dir: str = "profiles"

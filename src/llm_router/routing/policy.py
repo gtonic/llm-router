@@ -53,6 +53,20 @@ def _classify_task_type(text: str) -> str:
     return "general"
 
 
+def _message_text(message: dict) -> str:
+    """Extract safe text from string, content-part, or null message content."""
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(
+            part.get("text", "")
+            for part in content
+            if isinstance(part, dict) and isinstance(part.get("text"), str)
+        )
+    return ""
+
+
 class PolicyMatcher(PolicyBase):
     """Matches requests against YAML policy rules."""
 
@@ -88,8 +102,7 @@ class PolicyMatcher(PolicyBase):
 
     def _evaluate_conditions(self, conditions: dict, messages: list[dict]) -> bool:
         """Evaluate a single rule's conditions against messages."""
-        full_text = " ".join(msg.get("content", "") for msg in messages)
-        full_text.lower()
+        full_text = " ".join(_message_text(msg) for msg in messages)
 
         for key, value in conditions.items():
             if key == "contains_pii":

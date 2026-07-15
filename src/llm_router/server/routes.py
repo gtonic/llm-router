@@ -96,6 +96,7 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
                 api_key=body.api_key,
                 model=body.model,
                 tools=body.tools,
+                max_tokens=body.max_tokens,
             )
             elapsed = time.perf_counter() - start
             elapsed_ms = elapsed * 1000
@@ -146,16 +147,19 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
     # Streaming
     async def event_generator() -> AsyncGenerator[str, None]:
         try:
+            last_finish_reason = "stop"
             async for chunk in router_engine.generate_stream(
                 messages=_normalize_messages(body.model_dump()["messages"]),
                 user_id=body.user_id,
                 api_key=body.api_key,
                 model=body.model,
                 tools=body.tools,
+                max_tokens=body.max_tokens,
             ):
                 delta = {"content": chunk.content, "role": "assistant"}
                 if chunk.tool_calls:
                     delta["tool_calls"] = chunk.tool_calls
+                    last_finish_reason = "tool_calls"
                 chunk_data = ChatCompletionChunk(
                     model=chunk.model,
                     choices=[
@@ -168,7 +172,7 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
                 yield f"data: {chunk_data.model_dump_json()}\n\n"
             final_chunk = ChatCompletionChunk(
                 model=body.model,
-                choices=[ChunkChoice(delta={}, finish_reason="stop")],
+                choices=[ChunkChoice(delta={}, finish_reason=last_finish_reason)],
             )
             yield f"data: {final_chunk.model_dump_json()}\n\n"
             yield "data: [DONE]\n\n"

@@ -18,10 +18,10 @@ CREATIVE_KEYWORDS = {"write", "create", "design", "compose", "story", "poem", "s
 
 # Mapping complexity levels to model IDs (overridable via config)
 COMPLEXITY_TO_MODEL = {
-    "low": "smallest_local",
-    "medium": "medium_local",
-    "high": "large_local",
-    "critical": "remote_top",
+    "low": "llama-local",
+    "medium": "llama-local",
+    "high": "gpt-5.6-luna",
+    "critical": "gpt-5.6-luna",
 }
 
 
@@ -102,7 +102,7 @@ class ComplexityDetector:
         available_models: list[ModelBackend] | None = None,
     ) -> RoutingResult:
         complexity = self.analyze(messages)
-        model_id = COMPLEXITY_TO_MODEL.get(complexity.level, "large_local")
+        model_id = COMPLEXITY_TO_MODEL.get(complexity.level, "llama-local")
         return RoutingResult(
             model_id=model_id,
             strategy="complexity",

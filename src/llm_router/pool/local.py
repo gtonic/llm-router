@@ -10,7 +10,15 @@ import time
 from collections.abc import AsyncIterator
 
 from llm_router.config import ModelBackendConfig
-from llm_router.pool.base import GenerateResult, HealthStatus, ModelBackend, UsageInfo, normalize_tool_calls
+from llm_router.pool.base import (
+    GenerateResult,
+    HealthStatus,
+    ModelBackend,
+    UsageInfo,
+    merge_tool_calls,
+    normalize_tool_calls,
+    to_langchain_tool_calls,
+)
 
 
 class LlamaCPPBackend(ModelBackend):
@@ -48,21 +56,28 @@ class LlamaCPPBackend(ModelBackend):
     ) -> GenerateResult:
         start = time.perf_counter()
         self._ensure_client()
-        from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+        from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
         lc_messages = []
         for msg in messages:
             role = msg.get("role", "user")
-            content = msg.get("content", "")
+            content = msg.get("content") or ""
             if role == "system":
                 lc_messages.append(SystemMessage(content=content))
             elif role == "user":
                 lc_messages.append(HumanMessage(content=content))
+            elif role == "tool":
+                lc_messages.append(ToolMessage(content=content, tool_call_id=msg.get("tool_call_id", "")))
             else:
-                lc_messages.append(AIMessage(content=content))
+                lc_messages.append(
+                    AIMessage(content=content, tool_calls=to_langchain_tool_calls(msg.get("tool_calls")))
+                )
 
         client = self._client.bind_tools(tools) if tools else self._client
-        response = await client.ainvoke(lc_messages, timeout=self.config.timeout)
+        invoke_kwargs = {"timeout": self.config.timeout}
+        if max_tokens is not None:
+            invoke_kwargs["max_tokens"] = max_tokens
+        response = await client.ainvoke(lc_messages, **invoke_kwargs)
 
         elapsed = (time.perf_counter() - start) * 1000
         usage_data = getattr(response, "response_metadata", {}).get(
@@ -87,32 +102,52 @@ class LlamaCPPBackend(ModelBackend):
         messages: list[dict],
         temperature: float = 0.3,
         tools: list[dict] | None = None,
+        max_tokens: int | None = None,
         **kwargs,
     ) -> AsyncIterator[GenerateResult]:
         self._ensure_client()
-        from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+        from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
         lc_messages = []
         for msg in messages:
             role = msg.get("role", "user")
-            content = msg.get("content", "")
+            content = msg.get("content") or ""
             if role == "system":
                 lc_messages.append(SystemMessage(content=content))
             elif role == "user":
                 lc_messages.append(HumanMessage(content=content))
+            elif role == "tool":
+                lc_messages.append(ToolMessage(content=content, tool_call_id=msg.get("tool_call_id", "")))
             else:
-                lc_messages.append(AIMessage(content=content))
+                lc_messages.append(
+                    AIMessage(content=content, tool_calls=to_langchain_tool_calls(msg.get("tool_calls")))
+                )
 
         client = self._client.bind_tools(tools) if tools else self._client
-        async for chunk in client.astream(lc_messages, timeout=self.config.timeout):
+        streamed_tool_calls = []
+        stream_kwargs = {"timeout": self.config.timeout}
+        if max_tokens is not None:
+            stream_kwargs["max_tokens"] = max_tokens
+        async for chunk in client.astream(lc_messages, **stream_kwargs):
             content = chunk.content if hasattr(chunk, "content") else ""
             tool_calls = normalize_tool_calls(getattr(chunk, "tool_call_chunks", None))
+            merge_tool_calls(streamed_tool_calls, tool_calls)
             yield GenerateResult(
                 content=content if isinstance(content, str) else "",
                 model=self.config.model_name,
                 usage=UsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0),
-                finish_reason="tool_calls" if tool_calls else "incomplete",
-                tool_calls=tool_calls,
+                finish_reason="incomplete",
+                latency_ms=0,
+            )
+        if streamed_tool_calls:
+            for tool_call in streamed_tool_calls:
+                tool_call.pop("_stream_index", None)
+            yield GenerateResult(
+                content="",
+                model=self.config.model_name,
+                usage=UsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0),
+                finish_reason="tool_calls",
+                tool_calls=streamed_tool_calls,
                 latency_ms=0,
             )
 

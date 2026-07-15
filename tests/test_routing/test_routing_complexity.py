@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from llm_router.routing.complexity import COMPLEXITY_TO_MODEL, ComplexityDetector
+from llm_router.routing.complexity import COMPLEXITY_TO_MODEL, ComplexityDetector, ComplexityScore
 
 
 class TestComplexityDetector:
@@ -84,3 +84,21 @@ class TestComplexityToModel:
         for level, model_id in COMPLEXITY_TO_MODEL.items():
             assert isinstance(level, str)
             assert isinstance(model_id, str)
+
+    async def test_routes_local_for_low_complexity(self):
+        result = await ComplexityDetector().route([{"role": "user", "content": "Hi"}])
+        assert result.model_id == "llama-local"
+
+    async def test_routes_remote_for_high_complexity(self):
+        result = await ComplexityDetector().route([{"role": "user", "content": "word " * 600}])
+        assert result.model_id == "gpt-5.6-luna"
+
+    async def test_unknown_level_falls_back_to_local_model(self, monkeypatch):
+        detector = ComplexityDetector()
+        monkeypatch.setattr(
+            detector,
+            "analyze",
+            lambda messages: ComplexityScore(level="unknown", score=0.0, factors=[]),
+        )
+        result = await detector.route([{"role": "user", "content": "Hi"}])
+        assert result.model_id == "llama-local"
