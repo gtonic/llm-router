@@ -109,6 +109,26 @@ class TestLlamaCPPBackendGenerate:
         call_args = backend._client.ainvoke.call_args
         lc_messages = call_args[0][0]
         assert len(lc_messages) == 2
+        assert call_args.kwargs["extra_body"] == {"reasoning_format": "none"}
+
+    @pytest.mark.asyncio
+    async def test_generate_uses_reasoning_content_when_content_is_empty(self):
+        cfg = ModelBackendConfig(
+            id="llama",
+            name="Llama",
+            type="local",
+            base_url="http://localhost:8080/v1",
+            model_name="llama",
+        )
+        backend = LlamaCPPBackend(cfg)
+        mock_response = MagicMock(content="", response_metadata={"reasoning_content": "Recovered answer"})
+        backend._ensure_client = MagicMock()
+        backend._client = MagicMock()
+        backend._client.ainvoke = AsyncMock(return_value=mock_response)
+
+        result = await backend.generate([{"role": "user", "content": "Hi"}])
+
+        assert result.content == "Recovered answer"
 
 
 class TestLlamaCPPBackendStream:
@@ -167,6 +187,9 @@ class TestLlamaCPPBackendHealth:
             result = await backend.health_check()
         assert result.healthy is True
         assert result.latency_ms >= 0
+
+        mock_client = mock_httpx.AsyncClient()
+        mock_client.get.assert_awaited_once_with("http://localhost:8080/v1/models")
 
     @pytest.mark.asyncio
     async def test_health_check_unhealthy(self):

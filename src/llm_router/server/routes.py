@@ -34,7 +34,6 @@ from llm_router.server.app import (
     record_admin_action,
     record_error,
     record_request,
-    router_engine,
 )
 from llm_router.server.skill_manifest import (
     get_skill_index,
@@ -966,6 +965,8 @@ async def get_system_manifest():
     """
     from datetime import datetime
 
+    from llm_router.server.app import router_engine
+
     if router_engine is None:
         raise HTTPException(status_code=503, detail="Router not initialized")
 
@@ -1011,6 +1012,8 @@ async def get_system_manifest():
 @system_router.get("/system/health")
 async def get_system_health():
     """Detailed health check — backends, routing, guardrails."""
+    from llm_router.server.app import router_engine
+
     if router_engine is None:
         raise HTTPException(status_code=503, detail="Router not initialized")
 
@@ -1056,6 +1059,8 @@ async def get_system_metrics():
     Returns a JSON snapshot of all counters, histograms, and gauges.
     Also exposes the raw Prometheus text format at /metrics.
     """
+    from llm_router.server.app import router_engine
+
     if router_engine is None:
         raise HTTPException(status_code=503, detail="Router not initialized")
 
@@ -1086,6 +1091,8 @@ async def get_system_capabilities():
 
     This tells DevOps agents what operations they can perform on this system.
     """
+    from llm_router.server.app import router_engine
+
     if router_engine is None:
         raise HTTPException(status_code=503, detail="Router not initialized")
 
