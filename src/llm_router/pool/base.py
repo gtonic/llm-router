@@ -110,6 +110,10 @@ class HealthStatus:
     error: str | None = None
 
 
+class EmptyResponseError(RuntimeError):
+    """Raised when a backend reports success without assistant content."""
+
+
 class ModelBackend(ABC):
     """Abstract base class for all model backends.
 
@@ -163,8 +167,10 @@ class ModelBackend(ABC):
                 return await self.generate(messages, **kwargs)
             except Exception as exc:
                 last_error = exc
+                status_code = getattr(exc, "status_code", None)
+                if status_code in {400, 401, 403, 404}:
+                    break
                 if attempt < max_retries - 1:
-                    delay = 0.2**attempt * 10
-                    await asyncio.sleep(min(delay, 10))
+                    await asyncio.sleep(min(0.25 * (2**attempt), 5.0))
         assert last_error is not None
         raise last_error

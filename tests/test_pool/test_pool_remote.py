@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from llm_router.config import ModelBackendConfig
-from llm_router.pool.base import GenerateResult
+from llm_router.pool.base import EmptyResponseError, GenerateResult
 from llm_router.pool.remote import RemoteBackend
 
 
@@ -154,6 +154,25 @@ class TestRemoteBackendGenerate:
         assert result.usage.prompt_tokens == 0
         assert result.usage.completion_tokens == 0
 
+    @pytest.mark.asyncio
+    async def test_generate_rejects_empty_content(self):
+        cfg = ModelBackendConfig(
+            id="gpt",
+            name="GPT",
+            type="remote",
+            base_url="https://api.openai.com/v1",
+            api_key="sk-test",
+        )
+        backend = RemoteBackend(cfg)
+        response = MagicMock(content="", response_metadata={})
+        response.tool_calls = None
+        backend._ensure_client = MagicMock()
+        backend._client = MagicMock()
+        backend._client.ainvoke = AsyncMock(return_value=response)
+
+        with pytest.raises(EmptyResponseError):
+            await backend.generate([{"role": "user", "content": "Hello"}])
+
 
 class TestRemoteBackendStream:
     @pytest.mark.asyncio
@@ -212,6 +231,11 @@ class TestRemoteBackendHealth:
             result = await backend.health_check()
 
         assert result.healthy is True
+        mock_client = mock_httpx.AsyncClient()
+        mock_client.get.assert_awaited_once_with(
+            "https://api.openai.com/v1/models",
+            headers={"Authorization": "Bearer sk"},
+        )
 
     @pytest.mark.asyncio
     async def test_health_check_unhealthy(self):

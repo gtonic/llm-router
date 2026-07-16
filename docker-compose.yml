@@ -22,6 +22,7 @@ services:
       # Override env_file values with defaults
       - ROUTER_DEFAULT_STRATEGY=${ROUTER_DEFAULT_STRATEGY:-complexity}
       - ROUTER_DEFAULT_MODEL=${ROUTER_DEFAULT_MODEL:-llama-local}
+      - ROUTER_STRICT_CONFIG=${ROUTER_STRICT_CONFIG:-true}
       - ROUTER_ALLOWED_MODELS=${ROUTER_ALLOWED_MODELS:-llama-local,gpt-5.6-luna}
       - ROUTER_OTELP_ENDPOINT=${ROUTER_OTELP_ENDPOINT:-http://jaeger:4317/v1/traces}
       - ROUTER_OTELP_PROTOCOL=${ROUTER_OTELP_PROTOCOL:-grpc}

@@ -78,6 +78,9 @@ class ModelBackendConfig:
     temperature: float = 0.3
     max_tokens: int = 4096
     timeout: int = 60
+    connect_timeout: float = 5.0
+    read_timeout: float = 60.0
+    health_timeout: float = 5.0
     retry_count: int = 3
     cost_per_1m_input: float = 0.0
     cost_per_1m_output: float = 0.0
@@ -241,6 +244,8 @@ class GatewaySettings(BaseSettings):
     # ── Core ──────────────────────────────────
     default_strategy: RoutingStrategy = RoutingStrategy.COMPLEXITY
     default_model: str = "llama-local"
+    fallback_model: str = "llama-local"
+    admin_token: str = ""
 
     # ── Model Backends ────────────────────────
     models_dir: str = "profiles"

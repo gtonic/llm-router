@@ -7,7 +7,7 @@ client can talk to the router without changes.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Literal
 
@@ -100,7 +100,7 @@ class ChunkChoice(BaseModel):
 class ChatCompletionChunk(BaseModel):
     id: str = Field(default_factory=lambda: f"chatcmpl-{uuid.uuid4().hex[:12]}")
     object: Literal["chat.completion.chunk"] = "chat.completion.chunk"
-    created: int = Field(default_factory=lambda: int(datetime.utcnow().timestamp()))
+    created: int = Field(default_factory=lambda: int(datetime.now(UTC).timestamp()))
     model: str
     choices: list[ChunkChoice]
 
@@ -116,7 +116,7 @@ class ChatCompletionResponse(BaseModel):
 
     id: str = Field(default_factory=lambda: f"chatcmpl-{uuid.uuid4().hex[:12]}")
     object: Literal["chat.completion"] = "chat.completion"
-    created: int = Field(default_factory=lambda: int(datetime.utcnow().timestamp()))
+    created: int = Field(default_factory=lambda: int(datetime.now(UTC).timestamp()))
     model: str
     choices: list[ChatCompletionChoice]
     usage: UsageInfo
@@ -130,7 +130,7 @@ class ChatCompletionResponse(BaseModel):
 class ModelInfo(BaseModel):
     id: str
     object: Literal["model"] = "model"
-    created: int = Field(default_factory=lambda: int(datetime.utcnow().timestamp()))
+    created: int = Field(default_factory=lambda: int(datetime.now(UTC).timestamp()))
     owned_by: str = "llm-router"
     permission: list[dict] = Field(default_factory=list)
 

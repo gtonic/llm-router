@@ -85,6 +85,7 @@ def make_test_client():
         content_safety=content_safety,
         default_model="test-model",
     )
+    engine.settings.admin_token = "test-admin"
 
     result = GenerateResult(
         content="Mocked response",
@@ -119,7 +120,7 @@ def make_test_client():
 
     from llm_router.server.app import create_app
 
-    return TestClient(create_app())
+    return TestClient(create_app(), headers={"X-Admin-Token": "test-admin"})
 
 
 def make_tool_streaming_client():
@@ -570,6 +571,12 @@ class TestAdminReloadEndpoint:
             assert "config load failed" in resp.json()["detail"]
         finally:
             app_mod.router_engine.policy_matcher._load_policies = original
+
+    def test_reload_rejects_invalid_admin_token(self):
+        client = make_test_client()
+        client.headers["X-Admin-Token"] = "wrong"
+        resp = client.post("/v1/admin/reload")
+        assert resp.status_code == 401
 
 
 # ── Integration / Error Path Tests ─────────────────────────────────

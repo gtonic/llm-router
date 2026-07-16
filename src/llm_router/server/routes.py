@@ -12,7 +12,7 @@ from collections.abc import AsyncGenerator
 from dataclasses import asdict
 from datetime import UTC
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -32,8 +32,11 @@ from llm_router.pool.pool import ModelPool
 from llm_router.server.app import (
     PROMETHEUS_ENABLED,
     record_admin_action,
+    record_backend_health,
+    record_empty_response,
     record_error,
     record_request,
+    record_route_decision,
 )
 from llm_router.server.skill_manifest import (
     get_skill_index,
@@ -45,8 +48,23 @@ from llm_router.server.system_manifest import (
 )
 
 logger = logging.getLogger("llm-router")
+
+
+def require_admin(x_admin_token: str | None = Header(default=None)) -> None:
+    """Require the configured admin token for runtime mutation endpoints."""
+    import secrets
+
+    from llm_router.server.app import router_engine
+
+    configured = router_engine.settings.admin_token if router_engine else ""
+    if not configured:
+        raise HTTPException(status_code=503, detail="Admin authentication is not configured")
+    if not x_admin_token or not secrets.compare_digest(x_admin_token, configured):
+        raise HTTPException(status_code=401, detail="Invalid admin token")
+
+
 router = APIRouter(prefix="/v1", tags=["llm-router"])
-admin_router = APIRouter(prefix="/admin", tags=["admin"])
+admin_router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)])
 skill_router = APIRouter(tags=["agent-skills"])
 system_router = APIRouter(tags=["system"])
 
@@ -229,6 +247,7 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
                     prompt_tokens=result.usage.prompt_tokens,
                     completion_tokens=result.usage.completion_tokens,
                 )
+                record_route_decision(strategy)
 
             logger.info("[%s] %s %s %.1fms model=%s", request_id, request.client.host, "OK", elapsed_ms, result.model)
             return response
@@ -237,6 +256,8 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
             logger.error("[%s] Error: %s", request_id, exc)
             if PROMETHEUS_ENABLED:
                 record_error(model=body.model or "unknown", error_type=type(exc).__name__)
+                if type(exc).__name__ == "EmptyResponseError":
+                    record_empty_response(body.model or "unknown")
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     # Streaming
@@ -265,6 +286,8 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
                     ],
                 )
                 yield f"data: {chunk_data.model_dump_json()}\n\n"
+            if PROMETHEUS_ENABLED:
+                record_route_decision(router_engine.routing_strategy.value)
             final_chunk = ChatCompletionChunk(
                 model=body.model,
                 choices=[ChunkChoice(delta={}, finish_reason=last_finish_reason)],
@@ -273,6 +296,10 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
             yield "data: [DONE]\n\n"
         except Exception as exc:
             logger.error("[%s] Stream error: %s", request_id, exc)
+            if PROMETHEUS_ENABLED:
+                record_error(model=body.model or "unknown", error_type=type(exc).__name__)
+                if type(exc).__name__ == "EmptyResponseError":
+                    record_empty_response(body.model or "unknown")
             error_chunk = ChatCompletionChunk(
                 model="error",
                 choices=[ChunkChoice(delta={"content": str(exc)}, finish_reason="error")],
@@ -291,10 +318,9 @@ async def list_models():
     if router_engine is None:
         raise HTTPException(status_code=503, detail="Router not initialized")
 
-    model_list = ModelListResponse(
+    return ModelListResponse(
         data=[ModelInfo(id="router-auto")] + [ModelInfo(id=model_id) for model_id in router_engine.pool.list_models()]
     )
-    return model_list
 
 
 @router.get("/guardrails/pii/patterns")
@@ -339,7 +365,7 @@ async def check_guardrails(request: Request):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.post("/admin/reload")
+@router.post("/admin/reload", dependencies=[Depends(require_admin)])
 async def reload_config():
     """Reload policies and models from disk."""
     from llm_router.server.app import router_engine
@@ -1025,6 +1051,8 @@ async def get_system_health():
         status = health_results.get(mid)
         if status is None:
             continue
+        if PROMETHEUS_ENABLED:
+            record_backend_health(mid, backend.config.type, status.healthy)
         backends[mid] = {
             "id": mid,
             "name": backend.config.name,

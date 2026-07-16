@@ -53,6 +53,32 @@ class TestModelPoolInit:
         pool = ModelPool(models_dir="/nonexistent/path/xyz")
         assert pool.list_models() == []
 
+    def test_duplicate_ids_are_rejected(self, tmp_path):
+        (tmp_path / "one.yaml").write_text(
+            "- id: duplicate\n  name: One\n  type: local\n  base_url: http://one\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "two.yaml").write_text(
+            "- id: duplicate\n  name: Two\n  type: local\n  base_url: http://two\n",
+            encoding="utf-8",
+        )
+
+        with pytest.raises(ValueError, match="Duplicate model backend id"):
+            ModelPool(models_dir=str(tmp_path))
+
+    def test_strict_config_rejects_unresolved_environment(self, tmp_path):
+        (tmp_path / "models.yaml").write_text(
+            "- id: remote\n"
+            "  name: Remote\n"
+            "  type: remote\n"
+            "  base_url: https://example.com/v1\n"
+            "  api_key: ${MISSING_KEY}\n",
+            encoding="utf-8",
+        )
+
+        with pytest.raises(ValueError, match="Unresolved environment variable"):
+            ModelPool(models_dir=str(tmp_path), strict_config=True)
+
 
 class TestModelPoolManagement:
     def test_add_backend(self):
@@ -109,6 +135,18 @@ class TestModelPoolHealth:
         for mid, status in results.items():
             assert isinstance(status, HealthStatus)
             assert mid in results
+
+    @pytest.mark.asyncio
+    async def test_health_check_all_uses_cache(self, tmp_path):
+        pool = ModelPool(models_dir=str(tmp_path))
+        cfg = ModelBackendConfig(id="cached", name="Cached", type="local", base_url="http://x")
+        backend = DummyBackend(cfg)
+        pool.add_backend(cfg, backend)
+
+        first = await pool.health_check_all()
+        second = await pool.health_check_all()
+
+        assert first is second
 
     @pytest.mark.asyncio
     async def test_health_check_all_with_exception(self, tmp_path):

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -104,6 +105,18 @@ try:
         ["status"],
     )
 
+    EMPTY_RESPONSES = Counter(
+        "llm_router_empty_responses_total",
+        "Backend responses without assistant content",
+        ["model"],
+    )
+
+    BACKEND_HEALTH = Gauge(
+        "llm_router_backend_health",
+        "Backend health status (1 healthy, 0 unhealthy)",
+        ["model", "type"],
+    )
+
     ADMIN_ACTIONS = Counter(
         "llm_router_admin_actions_total",
         "Runtime administration actions",
@@ -155,6 +168,14 @@ try:
         """Record a routing decision."""
         ROUTE_DECISIONS.labels(strategy=strategy).inc()
 
+    def record_empty_response(model: str):
+        """Record a successful upstream response with no assistant content."""
+        EMPTY_RESPONSES.labels(model=model).inc()
+
+    def record_backend_health(model: str, backend_type: str, healthy: bool):
+        """Record the latest cached backend health state."""
+        BACKEND_HEALTH.labels(model=model, type=backend_type).set(1 if healthy else 0)
+
     def record_admin_action(action: str, status: str = "success"):
         """Record a runtime administration action without request details."""
         ADMIN_ACTIONS.labels(action=action, status=status).inc()
@@ -186,6 +207,12 @@ except ImportError:
     def record_route_decision(*args, **kwargs):
         pass
 
+    def record_empty_response(*args, **kwargs):
+        pass
+
+    def record_backend_health(*args, **kwargs):
+        pass
+
     def record_admin_action(*args, **kwargs):
         pass
 
@@ -213,7 +240,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         )
 
     # Initialize model pool
-    model_pool = ModelPool(models_dir=settings.models_dir)
+    strict_config = os.environ.get("ROUTER_STRICT_CONFIG", "false").lower() == "true"
+    model_pool = ModelPool(models_dir=settings.models_dir, strict_config=strict_config)
     logger.info("Loaded models: %s", model_pool.list_models())
 
     # Initialize guardrails
@@ -231,6 +259,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Initialize routing strategies
     policy_matcher = PolicyMatcher(policies_dir=settings.policies_dir, default_policy=settings.default_policy)
+    if strict_config:
+        available_models = set(model_pool.list_all_models())
+        invalid_targets = {
+            rule.target_model
+            for rule in policy_matcher.rules
+            if rule.target_model and rule.target_model not in available_models
+        }
+        if invalid_targets:
+            raise ValueError(f"Policies reference unknown models: {sorted(invalid_targets)}")
     complexity_detector = ComplexityDetector()
     hybrid_router = HybridRouter()
     round_robin = RoundRobinPolicy(model_pool.list_models())

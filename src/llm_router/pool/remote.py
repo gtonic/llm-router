@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 
 from llm_router.config import ModelBackendConfig
 from llm_router.pool.base import (
+    EmptyResponseError,
     GenerateResult,
     HealthStatus,
     ModelBackend,
@@ -30,6 +31,7 @@ class RemoteBackend(ModelBackend):
 
     def _ensure_client(self):
         if self._client is None:
+            import httpx
             from langchain_openai import ChatOpenAI
 
             self._client = ChatOpenAI(
@@ -38,7 +40,10 @@ class RemoteBackend(ModelBackend):
                 api_key=self.config.api_key,
                 temperature=self.config.temperature,
                 max_tokens=self.config.max_tokens,
-                timeout=self.config.timeout,
+                timeout=httpx.Timeout(
+                    self.config.read_timeout,
+                    connect=self.config.connect_timeout,
+                ),
             )
 
     def _calculate_cost(self, prompt_tokens: int, completion_tokens: int) -> float:
@@ -86,6 +91,9 @@ class RemoteBackend(ModelBackend):
         completion_tokens = usage.get("completion_tokens", 0)
 
         tool_calls = normalize_tool_calls(getattr(response, "tool_calls", None))
+        if (not isinstance(response.content, str) or not response.content.strip()) and not tool_calls:
+            raise EmptyResponseError(f"Backend '{self.config.id}' returned empty content")
+
         return GenerateResult(
             content=response.content if isinstance(response.content, str) else "",
             model=self.config.model_name,
@@ -159,8 +167,15 @@ class RemoteBackend(ModelBackend):
         try:
             import httpx
 
-            async with httpx.AsyncClient(timeout=5) as http:
-                resp = await http.get(f"{self.config.base_url.rstrip('/')}/v1/models")
+            timeout = httpx.Timeout(
+                self.config.health_timeout,
+                connect=min(self.config.connect_timeout, self.config.health_timeout),
+            )
+            async with httpx.AsyncClient(timeout=timeout) as http:
+                base_url = self.config.base_url.rstrip("/")
+                models_url = f"{base_url}/models" if base_url.endswith("/v1") else f"{base_url}/v1/models"
+                headers = {"Authorization": f"Bearer {self.config.api_key}"} if self.config.api_key else {}
+                resp = await http.get(models_url, headers=headers)
                 if resp.status_code == 200:
                     latency = (time.perf_counter() - start) * 1000
                     return HealthStatus(healthy=True, latency_ms=round(latency, 2))

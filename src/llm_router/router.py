@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 import time
 from collections.abc import AsyncIterator
@@ -19,6 +20,20 @@ from llm_router.routing.policy import PolicyMatcher
 from llm_router.routing.round_robin import RoundRobinPolicy
 
 logger = logging.getLogger("llm-router")
+
+
+def _retry_attempts(backend) -> int:
+    """Return a safe integer retry count for real and mocked backends."""
+    value = getattr(backend.config, "retry_count", 1)
+    return max(1, value) if isinstance(value, int) else 1
+
+
+async def _generate_with_retry(backend, messages: list[dict], **kwargs):
+    """Use retry support when supplied by a real backend implementation."""
+    retry_method = getattr(backend, "generate_with_retry", None)
+    if retry_method is not None and inspect.iscoroutinefunction(retry_method):
+        return await retry_method(messages, max_retries=_retry_attempts(backend), **kwargs)
+    return await backend.generate(messages, **kwargs)
 
 
 def _message_text(message: dict) -> str:
@@ -163,7 +178,7 @@ class RouterPolicyEngine:
             backend_kwargs = {"tools": tools} if tools else {}
             if max_tokens is not None:
                 backend_kwargs["max_tokens"] = max_tokens
-            result = await backend.generate(messages, **backend_kwargs)
+            result = await _generate_with_retry(backend, messages, **backend_kwargs)
             if self.pii_filter.redact:
                 result.content = self.pii_filter.redact_text(result.content)
             logger.info(
@@ -176,6 +191,11 @@ class RouterPolicyEngine:
             return result
         except Exception as exc:
             logger.error("[%s] Model call failed: %s", request_id, exc)
+            fallback_model = self.settings.fallback_model
+            if selected_model != fallback_model:
+                fallback = self.pool.get(fallback_model)
+                logger.warning("[%s] Falling back from %s to %s", request_id, selected_model, fallback_model)
+                return await _generate_with_retry(fallback, messages, **backend_kwargs)
             raise
 
     async def generate_stream(
@@ -230,6 +250,16 @@ class RouterPolicyEngine:
         backend_kwargs = {"tools": tools} if tools else {}
         if max_tokens is not None:
             backend_kwargs["max_tokens"] = max_tokens
-        async for chunk in backend.generate_stream(messages, **backend_kwargs):
-            if chunk.content or chunk.tool_calls:
-                yield chunk
+        try:
+            async for chunk in backend.generate_stream(messages, **backend_kwargs):
+                if chunk.content or chunk.tool_calls:
+                    yield chunk
+        except Exception:
+            fallback_model = self.settings.fallback_model
+            if selected_model == fallback_model:
+                raise
+            fallback = self.pool.get(fallback_model)
+            logger.warning("[%s] Streaming fallback from %s to %s", request_id, selected_model, fallback_model)
+            async for chunk in fallback.generate_stream(messages, **backend_kwargs):
+                if chunk.content or chunk.tool_calls:
+                    yield chunk

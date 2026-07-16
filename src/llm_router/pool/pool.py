@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import time
+from urllib.parse import urlparse
 
 import yaml
 
@@ -36,19 +38,26 @@ def _substitute_env_vars(value):
 class ModelPool:
     """Manages a collection of model backends with automatic loading."""
 
-    def __init__(self, models_dir: str = "profiles") -> None:
+    def __init__(self, models_dir: str = "profiles", strict_config: bool = False) -> None:
         self._backends: dict[str, ModelBackend] = {}
         self._models_dir = models_dir
+        self._strict_config = strict_config
+        self._health_cache: tuple[float, dict[str, HealthStatus]] | None = None
         self._load_configs()
 
     def _load_configs(self) -> None:
         """Load model configs from YAML files."""
         if not os.path.isdir(self._models_dir):
             return
-        for filename in sorted(os.listdir(self._models_dir)):
-            if filename.endswith(".yaml") or filename.endswith(".yml"):
-                filepath = os.path.join(self._models_dir, filename)
-                self._load_config_file(filepath)
+        filenames = sorted(
+            filename
+            for filename in os.listdir(self._models_dir)
+            if filename.endswith(".yaml") or filename.endswith(".yml")
+        )
+        if "models.yaml" in filenames:
+            filenames = ["models.yaml"]
+        for filename in filenames:
+            self._load_config_file(os.path.join(self._models_dir, filename))
 
     def _load_config_file(self, filepath: str) -> None:
         with open(filepath) as f:
@@ -58,7 +67,16 @@ class ModelPool:
         for cfg_dict in configs:
             # Substitute environment variables in the config
             resolved = _substitute_env_vars(cfg_dict)
+            if self._strict_config and any(isinstance(value, str) and "${" in value for value in resolved.values()):
+                raise ValueError(f"Unresolved environment variable in {filepath}")
             cfg = ModelBackendConfig(**resolved)
+            if self._strict_config and cfg.type == "remote" and not cfg.api_key:
+                raise ValueError(f"Remote backend '{cfg.id}' requires an API key")
+            parsed_url = urlparse(cfg.base_url)
+            if self._strict_config and (parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc):
+                raise ValueError(f"Backend '{cfg.id}' has invalid base_url")
+            if cfg.id in self._backends:
+                raise ValueError(f"Duplicate model backend id: {cfg.id}")
             backend = self._create_backend(cfg)
             self._backends[cfg.id] = backend
 
@@ -102,8 +120,11 @@ class ModelPool:
         """Rebuild and replace a backend after connection settings change."""
         self._backends[config.id] = self._create_backend(config)
 
-    async def health_check_all(self) -> dict[str, HealthStatus]:
+    async def health_check_all(self, force: bool = False) -> dict[str, HealthStatus]:
         """Run health checks on all backends in parallel."""
+        now = time.monotonic()
+        if not force and self._health_cache and now - self._health_cache[0] < 15:
+            return self._health_cache[1]
         coros = {mid: backend.health_check() for mid, backend in self._backends.items()}
         results_list = await asyncio.gather(*coros.values(), return_exceptions=True)
         results: dict[str, HealthStatus] = dict(zip(coros.keys(), results_list, strict=True))
@@ -111,6 +132,7 @@ class ModelPool:
         for mid, result in results.items():
             if isinstance(result, Exception):
                 results[mid] = HealthStatus(healthy=False, latency_ms=0, error=str(result))
+        self._health_cache = (now, results)
         return results
 
     def get_healthy_models(self) -> list[str]:

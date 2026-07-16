@@ -52,6 +52,7 @@ class LlamaCPPBackend(ModelBackend):
 
     def _ensure_client(self):
         if self._client is None:
+            import httpx
             from langchain_openai import ChatOpenAI
 
             self._client = ChatOpenAI(
@@ -60,7 +61,10 @@ class LlamaCPPBackend(ModelBackend):
                 api_key=self.config.api_key or "sk-not-required",
                 temperature=self.config.temperature,
                 max_tokens=self.config.max_tokens,
-                timeout=self.config.timeout,
+                timeout=httpx.Timeout(
+                    self.config.read_timeout,
+                    connect=self.config.connect_timeout,
+                ),
             )
 
     async def generate(
