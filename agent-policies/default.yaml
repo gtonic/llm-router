@@ -1,8 +1,18 @@
 # ═══════════════════════════════════════════════════════════
-# Default Routing Policies
+# 3-Tier Routing Policies (Task-Type Based)
 # ═══════════════════════════════════════════════════════════
 # Rules are evaluated in priority order (highest first).
 # The first matching rule determines the target model.
+#
+# Tier 1: llama-local    — Free, fast, for trivial/local tasks
+# Tier 2: gpt-5.4-nano   — $0.20/$1.25 per MTok, for most tasks
+# Tier 3: gpt-5.6-luna   — $1.00/$6.00 per MTok, for complex tasks
+#
+# Supported conditions (from policy.py):
+#   contains_pii: true  → PII detected
+#   task_type: <string> → "code" | "analysis" | "creative" | "general"
+#   complexity: <level> → "low" | "medium" | "high" | "critical"
+# ═══════════════════════════════════════════════════════════
 
 rules:
   # ── Security: PII always stays local ─────────────────────
@@ -14,28 +24,46 @@ rules:
     target_model: llama-local
     priority: 100
 
-  # ── Code generation → large local model ──────────────────
-  - id: code_generation
-    name: Code → Large Local Model
-    description: "Code-related prompts go to the largest available local model"
+  # ── Code → nano (cost-effective) ─────────────────────────
+  - id: code_nano
+    name: Code → Nano
+    description: "Code tasks use cheap nano model"
     conditions:
       task_type: code
-    target_model: llama-local
-    priority: 50
+    target_model: gpt-5.4-nano
+    priority: 60
 
-  # ── Complex analysis → remote model ──────────────────────
-  - id: complex_analysis
-    name: Complex Analysis → Remote
-    description: "High-complexity analysis tasks use remote models"
+  # ── Trivial/simple → local model ─────────────────────────
+  - id: trivial_local
+    name: Trivial → Local
+    description: "Low complexity, general tasks stay local (free)"
     conditions:
-      complexity: high
-    target_model: gpt-5.6-luna
+      complexity: low
+    target_model: llama-local
     priority: 30
 
-  # ── Default fallback → remote model ──────────────────────
-  - id: default_remote
-    name: Default Remote
-    description: "Fallback to remote model for unmatched requests"
-    conditions: {}
+  # ── Analysis → luna (premium) ────────────────────────────
+  - id: analysis_luna
+    name: Analysis → Luna
+    description: "Analysis/compare/evaluate tasks use premium luna"
+    conditions:
+      task_type: analysis
     target_model: gpt-5.6-luna
+    priority: 50
+
+  # ── Creative → nano ──────────────────────────────────────
+  - id: creative_nano
+    name: Creative → Nano
+    description: "Creative/writing tasks use nano"
+    conditions:
+      task_type: creative
+    target_model: gpt-5.4-nano
+    priority: 40
+
+  # ── Default fallback → nano (cheapest capable model) ─────
+  - id: default_nano
+    name: Default → Nano
+    description: "Most requests go to the cost-effective nano model"
+    conditions: {}
+    target_model: gpt-5.4-nano
     priority: 0

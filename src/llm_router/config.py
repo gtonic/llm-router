@@ -244,7 +244,7 @@ class GatewaySettings(BaseSettings):
     # ── Core ──────────────────────────────────
     default_strategy: RoutingStrategy = RoutingStrategy.COMPLEXITY
     default_model: str = "llama-local"
-    fallback_model: str = "llama-local"
+    fallback_model: str = "gpt-5.4-nano"
     admin_token: str = ""
 
     # ── Model Backends ────────────────────────

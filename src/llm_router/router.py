@@ -140,6 +140,7 @@ class RouterPolicyEngine:
 
         # 2. Input PII filter
         full_text = " ".join(_message_text(msg) for msg in messages)
+        routing_messages = messages
         pii_result = self.pii_filter.check(full_text, mode="input") if self.settings.guardrails.pii_enabled else None
         if pii_result is not None and pii_result.has_pii:
             logger.info("[%s] PII detected: %s", request_id, pii_result.patterns)
@@ -159,7 +160,7 @@ class RouterPolicyEngine:
         # 4. Routing decision
         strategy = self.routing_strategy
         if strategy == RoutingStrategy.POLICY:
-            routing_result = await self.policy_matcher.route(messages)
+            routing_result = await self.policy_matcher.route(routing_messages)
         elif strategy == RoutingStrategy.COMPLEXITY:
             routing_result = await self.complexity_detector.route(messages)
         elif strategy == RoutingStrategy.ROUND_ROBIN:
@@ -221,8 +222,10 @@ class RouterPolicyEngine:
 
         # 2. Input PII filter
         full_text = " ".join(_message_text(msg) for msg in messages)
-        if self.settings.guardrails.pii_enabled:
-            self.pii_filter.check(full_text, mode="input")
+        routing_messages = messages
+        pii_result = self.pii_filter.check(full_text, mode="input") if self.settings.guardrails.pii_enabled else None
+        if pii_result is not None and pii_result.has_pii:
+            messages = _redact_messages(messages, self.pii_filter)
 
         # 3. Input abuse filter
         abuse_result = self.abuse_filter.check(full_text) if self.settings.guardrails.abuse_enabled else None
@@ -232,7 +235,7 @@ class RouterPolicyEngine:
         # 4. Routing decision
         strategy = self.routing_strategy
         if strategy == RoutingStrategy.POLICY:
-            routing_result = await self.policy_matcher.route(messages)
+            routing_result = await self.policy_matcher.route(routing_messages)
         elif strategy == RoutingStrategy.COMPLEXITY:
             routing_result = await self.complexity_detector.route(messages)
         elif strategy == RoutingStrategy.ROUND_ROBIN:

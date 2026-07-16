@@ -212,6 +212,22 @@ class TestGenerate:
         asyncio.run(engine.generate([{"role": "user", "content": "Hi"}]))
         engine.policy_matcher.route.assert_awaited_once()
 
+    def test_generate_routes_pii_on_raw_messages_and_sends_redacted_messages(self):
+        engine = make_router()
+        self._mock_rate_ok(engine)
+        self._mock_abuse_safe(engine)
+        engine.pii_filter.redact = True
+        engine.pii_filter.check.return_value = MagicMock(has_pii=True, patterns=["email"])
+        engine.pii_filter.redact_text.side_effect = lambda text: text.replace("jane@example.com", "[REDACTED]")
+        self._mock_policy_route(engine, model_id="llama-local")
+        self._mock_backend_success(engine)
+        messages = [{"role": "user", "content": "Contact jane@example.com"}]
+
+        asyncio.run(engine.generate(messages, model="router-auto"))
+
+        engine.policy_matcher.route.assert_awaited_once_with(messages)
+        engine.pool.get.return_value.generate.assert_awaited_with([{"role": "user", "content": "Contact [REDACTED]"}])
+
     def test_generate_calls_complexity_route(self):
         engine = make_router(routing_strategy=RoutingStrategy.COMPLEXITY)
         self._mock_rate_ok(engine)

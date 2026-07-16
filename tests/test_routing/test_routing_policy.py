@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import tempfile
 from pathlib import Path
 
@@ -173,7 +174,18 @@ rules:
 
     def test_policy_matched_in_metadata(self):
         matcher = PolicyMatcher(policies_dir=str(self.tmpdir))
-        import asyncio
 
         result = asyncio.run(matcher.route([{"role": "user", "content": "test@example.com"}]))
         assert result.metadata.get("rule_name") == "Block PII"
+
+    def test_default_policy_prioritizes_task_type_before_low_complexity(self):
+        policies_dir = Path(__file__).resolve().parents[2] / "agent-policies"
+        matcher = PolicyMatcher(policies_dir=str(policies_dir))
+
+        analysis = asyncio.run(
+            matcher.route([{"role": "user", "content": "Analysiere und vergleiche zwei Szenarien."}])
+        )
+        creative = asyncio.run(matcher.route([{"role": "user", "content": "Schreibe ein kurzes Gedicht."}]))
+
+        assert (analysis.policy_matched, analysis.model_id) == ("analysis_luna", "gpt-5.6-luna")
+        assert (creative.policy_matched, creative.model_id) == ("creative_nano", "gpt-5.4-nano")

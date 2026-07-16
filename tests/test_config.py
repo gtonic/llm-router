@@ -160,9 +160,10 @@ class TestRateLimitConfig:
 
 class TestGatewaySettings:
     def test_defaults(self):
-        gs = GatewaySettings()
+        gs = GatewaySettings(_env_file=None)
         assert gs.default_strategy == RoutingStrategy.COMPLEXITY
         assert gs.default_model == "llama-local"
+        assert gs.fallback_model == "gpt-5.4-nano"
         assert gs.otlp_endpoint == "http://localhost:4318/v1/traces"
         assert gs.host == "0.0.0.0"
         assert gs.port == 8000
