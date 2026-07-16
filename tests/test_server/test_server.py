@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -322,6 +322,22 @@ class TestChatCompletions:
         assert resp.status_code == 200
         # Streaming returns a StreamingResponse
         assert "text/event-stream" in resp.headers.get("content-type", "")
+
+    def test_streaming_records_request_metrics(self):
+        client = make_test_client()
+
+        with (
+            patch("llm_router.server.routes.PROMETHEUS_ENABLED", True),
+            patch("llm_router.server.routes.record_request") as record_request,
+            patch("llm_router.server.routes.record_route_decision"),
+        ):
+            resp = self._post_chat(client, stream=True)
+
+        assert resp.status_code == 200
+        record_request.assert_called_once()
+        assert record_request.call_args.kwargs["model"] == "test-model"
+        assert record_request.call_args.kwargs["strategy"] == "policy"
+        assert record_request.call_args.kwargs["status"] == "success"
 
     def test_streaming_tool_call_preserves_structured_delta(self):
         """Streaming tool calls must survive even when their content is empty."""

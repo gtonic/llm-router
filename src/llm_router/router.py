@@ -12,7 +12,7 @@ from llm_router.guardrails.abuse_filter import AbuseFilter
 from llm_router.guardrails.content_safety import ContentSafety
 from llm_router.guardrails.pii_filter import PiiFilter
 from llm_router.guardrails.rate_limiter import RateLimiter
-from llm_router.pool.base import GenerateResult
+from llm_router.pool.base import EmptyResponseError, GenerateResult
 from llm_router.pool.pool import ModelPool
 from llm_router.routing.complexity import ComplexityDetector
 from llm_router.routing.hybrid import HybridRouter
@@ -34,6 +34,17 @@ async def _generate_with_retry(backend, messages: list[dict], **kwargs):
     if retry_method is not None and inspect.iscoroutinefunction(retry_method):
         return await retry_method(messages, max_retries=_retry_attempts(backend), **kwargs)
     return await backend.generate(messages, **kwargs)
+
+
+async def _generate_stream_with_content(backend, messages: list[dict], **kwargs) -> AsyncIterator[GenerateResult]:
+    """Yield meaningful stream chunks or fail so the caller can use its fallback."""
+    yielded_content = False
+    async for chunk in backend.generate_stream(messages, **kwargs):
+        if chunk.content or chunk.tool_calls:
+            yielded_content = True
+            yield chunk
+    if not yielded_content:
+        raise EmptyResponseError(f"Backend '{backend.config.id}' returned an empty stream")
 
 
 def _message_text(message: dict) -> str:
@@ -254,15 +265,13 @@ class RouterPolicyEngine:
         if max_tokens is not None:
             backend_kwargs["max_tokens"] = max_tokens
         try:
-            async for chunk in backend.generate_stream(messages, **backend_kwargs):
-                if chunk.content or chunk.tool_calls:
-                    yield chunk
+            async for chunk in _generate_stream_with_content(backend, messages, **backend_kwargs):
+                yield chunk
         except Exception:
             fallback_model = self.settings.fallback_model
             if selected_model == fallback_model:
                 raise
             fallback = self.pool.get(fallback_model)
             logger.warning("[%s] Streaming fallback from %s to %s", request_id, selected_model, fallback_model)
-            async for chunk in fallback.generate_stream(messages, **backend_kwargs):
-                if chunk.content or chunk.tool_calls:
-                    yield chunk
+            async for chunk in _generate_stream_with_content(fallback, messages, **backend_kwargs):
+                yield chunk

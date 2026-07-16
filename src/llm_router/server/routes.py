@@ -263,7 +263,10 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
     # Streaming
     async def event_generator() -> AsyncGenerator[str, None]:
         try:
+            start = time.perf_counter()
             last_finish_reason = "stop"
+            streamed_model = body.model
+            streamed_usage = None
             async for chunk in router_engine.generate_stream(
                 messages=_normalize_messages(body.model_dump()["messages"]),
                 user_id=body.user_id,
@@ -272,6 +275,8 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
                 tools=body.tools,
                 max_tokens=body.max_tokens,
             ):
+                streamed_model = chunk.model or streamed_model
+                streamed_usage = chunk.usage
                 delta = {"content": chunk.content, "role": "assistant"}
                 if chunk.tool_calls:
                     delta["tool_calls"] = chunk.tool_calls
@@ -287,9 +292,19 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
                 )
                 yield f"data: {chunk_data.model_dump_json()}\n\n"
             if PROMETHEUS_ENABLED:
+                usage = streamed_usage or ModelsUsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0)
+                record_request(
+                    model=streamed_model or "unknown",
+                    strategy=router_engine.routing_strategy.value,
+                    status="success",
+                    duration=time.perf_counter() - start,
+                    cost=getattr(usage, "cost", 0.0) or 0.0,
+                    prompt_tokens=usage.prompt_tokens,
+                    completion_tokens=usage.completion_tokens,
+                )
                 record_route_decision(router_engine.routing_strategy.value)
             final_chunk = ChatCompletionChunk(
-                model=body.model,
+                model=streamed_model or body.model,
                 choices=[ChunkChoice(delta={}, finish_reason=last_finish_reason)],
             )
             yield f"data: {final_chunk.model_dump_json()}\n\n"

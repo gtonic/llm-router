@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from llm_router.config import RoutingStrategy
-from llm_router.pool.base import GenerateResult, UsageInfo
+from llm_router.pool.base import EmptyResponseError, GenerateResult, UsageInfo
 from llm_router.router import RouterPolicyEngine
 
 # ── Fixtures ────────────────────────────────────────────────────────
@@ -595,8 +595,8 @@ class TestGenerateStream:
                 collected.append(chunk)
             return collected
 
-        chunks = asyncio.run(_collect())
-        assert chunks == []
+        with pytest.raises(EmptyResponseError):
+            asyncio.run(_collect())
 
     def test_stream_calls_round_robin_strategy(self):
         """ROUND_ROBIN strategy should call round_robin.route in generate_stream."""
@@ -833,6 +833,45 @@ class TestModelCallFailure:
 
 
 class TestStreamFallbackStrategies:
+    def test_empty_stream_falls_back_to_configured_model(self):
+        engine = make_router()
+        engine.rate_limiter.check = AsyncMock(return_value=MagicMock(allowed=True, remaining_requests=59))
+        engine.abuse_filter.check.return_value = MagicMock(safe=True, categories=[])
+        engine.pii_filter.check.return_value = MagicMock(has_pii=False, patterns=[])
+        engine.policy_matcher.route = AsyncMock(return_value=MagicMock(model_id="primary", strategy="policy"))
+        engine.settings.fallback_model = "fallback"
+        primary = MagicMock()
+        fallback = MagicMock()
+
+        async def _empty_stream(messages, **kwargs):
+            if False:
+                yield None
+
+        async def _fallback_stream(messages, **kwargs):
+            yield GenerateResult(
+                content="fallback response",
+                model="fallback",
+                usage=UsageInfo(prompt_tokens=1, completion_tokens=2, total_tokens=3),
+                finish_reason="stop",
+                latency_ms=5.0,
+            )
+
+        primary.generate_stream = _empty_stream
+        fallback.generate_stream = _fallback_stream
+        engine.pool.get.side_effect = {"primary": primary, "fallback": fallback}.get
+
+        async def _collect():
+            chunks = []
+            async for chunk in engine.generate_stream([{"role": "user", "content": "hi"}]):
+                chunks.append(chunk)
+            return chunks
+
+        chunks = asyncio.run(_collect())
+
+        assert [chunk.content for chunk in chunks] == ["fallback response"]
+        assert engine.pool.get.call_args_list[0].args == ("primary",)
+        assert engine.pool.get.call_args_list[1].args == ("fallback",)
+
     def test_stream_hybrid_strategy_calls_policy_matcher(self):
         """HYBRID strategy falls through to policy matcher in generate_stream."""
         engine = make_router(routing_strategy=RoutingStrategy.HYBRID)
