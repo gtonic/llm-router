@@ -36,10 +36,18 @@ services:
       - jaeger
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      # Readiness, not just liveness: fails only if every configured backend is
+      # unreachable (a single provider outage is tolerated via routing fallback).
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import json,sys,urllib.request; d=json.load(urllib.request.urlopen('http://localhost:8000/v1/system/health', timeout=8)); b=d.get('backends',{}); sys.exit(0 if (not b or any(v.get('healthy') for v in b.values())) else 1)",
+        ]
       interval: 30s
-      timeout: 5s
-      start_period: 10s
+      timeout: 10s
+      start_period: 15s
       retries: 3
     networks:
       - llm-router-net

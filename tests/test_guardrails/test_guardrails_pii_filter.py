@@ -73,6 +73,23 @@ class TestPiiFilterCheck:
         result = f.check("Contact me at user@example.com")
         assert result.redacted_text is None
 
+    def test_health_keyword_does_not_match_ordinary_words(self):
+        """'aid'/'hiv' as word-bounded keywords must not match substrings like
+        'said', 'raid', 'maid', 'archive', 'shiver'."""
+        for text in ["User said hello", "please raid the pantry", "The maid arrived", "the archive is empty"]:
+            result = self.filter.check(text)
+            assert "health_data" not in result.patterns, text
+
+    def test_bare_digit_run_is_not_flagged_as_phone_or_vat(self):
+        """An unformatted long number (order/invoice ID) must not be treated as PII."""
+        result = self.filter.check("Purchase order 12345678901")
+        assert "phone" not in result.patterns
+        assert "vat_id" not in result.patterns
+
+    def test_vat_id_requires_de_prefix(self):
+        result = self.filter.check("VAT ID: DE123456789")
+        assert "vat_id" in result.patterns
+
 
 class TestPiiFilterRedactText:
     def test_redacts_text(self):

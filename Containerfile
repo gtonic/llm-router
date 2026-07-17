@@ -48,9 +48,11 @@ EXPOSE 8000
 
 USER appuser
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
+# Readiness, not just liveness: fail if the process is up but every configured
+# backend is unreachable (a single provider outage is tolerated — that's what
+# routing fallback is for).
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD python -c "import json,sys,urllib.request; d=json.load(urllib.request.urlopen('http://localhost:8000/v1/system/health', timeout=8)); b=d.get('backends',{}); sys.exit(0 if (not b or any(v.get('healthy') for v in b.values())) else 1)" || exit 1
 
 ENTRYPOINT ["llm-router-server"]
 CMD []

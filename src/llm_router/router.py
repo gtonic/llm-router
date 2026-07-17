@@ -7,6 +7,8 @@ import logging
 import time
 from collections.abc import AsyncIterator
 
+from opentelemetry import trace as otel_trace
+
 from llm_router.config import GatewaySettings, RoutingStrategy
 from llm_router.guardrails.abuse_filter import AbuseFilter
 from llm_router.guardrails.content_safety import ContentSafety, ContentSafetyBlockedError
@@ -20,8 +22,18 @@ from llm_router.routing.complexity import ComplexityDetector
 from llm_router.routing.hybrid import HybridRouter
 from llm_router.routing.policy import PolicyMatcher
 from llm_router.routing.round_robin import RoundRobinPolicy
+from llm_router.tracing.otel_setup import get_tracer
+from llm_router.tracing.span_attributes import SpanAttributes
 
 logger = logging.getLogger("llm-router")
+
+
+def _trace_id_hex(span) -> str | None:
+    """Return the current span's trace ID as hex, or None if tracing is inactive."""
+    ctx = span.get_span_context()
+    if not ctx.is_valid:
+        return None
+    return format(ctx.trace_id, "032x")
 
 
 class RateLimitExceededError(RuntimeError):
@@ -132,7 +144,7 @@ class RouterPolicyEngine:
         self.abuse_filter = abuse_filter
         self.content_safety = content_safety
         self.default_model = default_model
-        self.audit_logger = AuditLogger(self.settings.log_dir)
+        self.audit_logger = AuditLogger(self.settings.log_dir, retention_days=self.settings.audit_retention_days)
 
     def sync_runtime_models(self) -> None:
         """Synchronize routing policies with currently enabled backends."""
@@ -168,11 +180,17 @@ class RouterPolicyEngine:
         result: GenerateResult | None = None,
         error: str | None = None,
         latency_ms: float = 0.0,
+        span=None,
     ) -> None:
-        """Best-effort JSONL audit entry. Never raises."""
+        """Best-effort JSONL audit entry, correlated with the OTEL trace ID. Never raises.
+
+        Also finalizes ``span`` (sets status/attributes and ends it) when provided —
+        this is the single place every request path terminates, streaming excepted.
+        """
         try:
             pii_patterns = getattr(pii_result, "patterns", None) or []
             abuse_score = getattr(abuse_result, "abuse_score", 0.0) or 0.0
+            trace_id = _trace_id_hex(span) if span is not None else None
             entry = AuditEntry(
                 request_id=request_id,
                 user_id=user_id,
@@ -188,10 +206,34 @@ class RouterPolicyEngine:
                 cost=result.usage.cost if result else 0.0,
                 latency_ms=result.latency_ms if result else latency_ms,
                 error=error,
+                trace_id=trace_id,
             )
             self.audit_logger.log(entry)
+            if span is not None:
+                span.set_attribute(SpanAttributes.GATEWAY_REQUEST_ID, request_id)
+                span.set_attribute(SpanAttributes.MODEL_SELECTED, model_selected or "")
+                span.set_attribute(SpanAttributes.AUDIT_STATUS, status)
+                span.set_attribute(SpanAttributes.AUDIT_LOGGED, True)
+                span.set_attribute(SpanAttributes.GUARDRAIL_PII_DETECTED, bool(pii_patterns))
+                span.set_attribute(SpanAttributes.GUARDRAIL_ABUSE_SCORE, float(abuse_score))
+                if routing_result is not None and routing_result.policy_matched:
+                    span.set_attribute(SpanAttributes.ROUTING_POLICY, routing_result.policy_matched)
+                if result is not None:
+                    span.set_attribute(SpanAttributes.TOKEN_PROMPT, result.usage.prompt_tokens)
+                    span.set_attribute(SpanAttributes.TOKEN_COMPLETION, result.usage.completion_tokens)
+                    span.set_attribute(SpanAttributes.TOKEN_TOTAL, result.usage.total_tokens)
+                    span.set_attribute(SpanAttributes.TOKEN_COST, result.usage.cost)
+                    span.set_attribute(SpanAttributes.LATENCY_MS, result.latency_ms)
+                if error:
+                    span.set_attribute(SpanAttributes.RESPONSE_ERROR, error)
+                    span.set_status(otel_trace.Status(otel_trace.StatusCode.ERROR, error))
+                else:
+                    span.set_status(otel_trace.Status(otel_trace.StatusCode.OK))
         except Exception:
             logger.debug("[%s] Failed to build audit entry", request_id, exc_info=True)
+        finally:
+            if span is not None:
+                span.end()
 
     async def generate(
         self,
@@ -210,13 +252,19 @@ class RouterPolicyEngine:
         client_id = user_id or api_key or client_ip or "anonymous"
         start = time.perf_counter()
 
+        span = get_tracer("llm-router").start_span("gateway.chat_completion")
+        span.set_attribute(SpanAttributes.GATEWAY_REQUEST_ID, request_id)
+        span.set_attribute(SpanAttributes.GATEWAY_USER_ID, user_id or "anonymous")
+        span.set_attribute(SpanAttributes.ROUTING_STRATEGY, self.routing_strategy.value)
+
         # 1. Rate limit check
         rate_result = (
             await self.rate_limiter.check(client_id=client_id, tokens=100) if self.settings.rate_limit.enabled else None
         )
         if rate_result is not None and not rate_result.allowed:
             logger.warning("[%s] Rate limited: %s", request_id, rate_result.error)
-            self._log_audit(request_id, user_id, "", "rate_limited", error=rate_result.error)
+            span.set_attribute(SpanAttributes.GUARDRAIL_RATE_LIMITED, True)
+            self._log_audit(request_id, user_id, "", "rate_limited", error=rate_result.error, span=span)
             raise RateLimitExceededError(f"Rate limited: {rate_result.error}")
 
         # 2. Input PII filter
@@ -236,6 +284,7 @@ class RouterPolicyEngine:
                 abuse_result.abuse_score,
                 abuse_result.categories,
             )
+            span.set_attribute(SpanAttributes.GUARDRAIL_ABUSE_SAFE, False)
             self._log_audit(
                 request_id,
                 user_id,
@@ -244,6 +293,7 @@ class RouterPolicyEngine:
                 pii_result=pii_result,
                 abuse_result=abuse_result,
                 error=f"Abuse detected: {abuse_result.categories}",
+                span=span,
             )
             raise AbuseDetectedError(f"Abuse detected: {abuse_result.categories}")
 
@@ -276,6 +326,7 @@ class RouterPolicyEngine:
                     abuse_result=abuse_result,
                     error=str(exc),
                     latency_ms=(time.perf_counter() - start) * 1000,
+                    span=span,
                 )
                 raise
             logger.warning("[%s] Falling back from %s to %s", request_id, selected_model, fallback_model)
@@ -294,6 +345,7 @@ class RouterPolicyEngine:
                     abuse_result=abuse_result,
                     error=str(fallback_exc),
                     latency_ms=(time.perf_counter() - start) * 1000,
+                    span=span,
                 )
                 raise
 
@@ -317,6 +369,7 @@ class RouterPolicyEngine:
                     abuse_result=abuse_result,
                     result=result,
                     error=f"Content safety blocked: {safety_result.categories}",
+                    span=span,
                 )
                 raise ContentSafetyBlockedError(
                     f"Response blocked by content safety policy: {safety_result.categories}"
@@ -343,6 +396,7 @@ class RouterPolicyEngine:
             pii_result=pii_result,
             abuse_result=abuse_result,
             result=result,
+            span=span,
         )
         return result
 
@@ -360,12 +414,18 @@ class RouterPolicyEngine:
         request_id = f"{user_id or 'anonymous'}:{int(time.time())}"
         client_id = user_id or api_key or client_ip or "anonymous"
 
+        span = get_tracer("llm-router").start_span("gateway.chat_completion_stream")
+        span.set_attribute(SpanAttributes.GATEWAY_REQUEST_ID, request_id)
+        span.set_attribute(SpanAttributes.GATEWAY_USER_ID, user_id or "anonymous")
+        span.set_attribute(SpanAttributes.ROUTING_STRATEGY, self.routing_strategy.value)
+
         # 1. Rate limit check
         rate_result = (
             await self.rate_limiter.check(client_id=client_id, tokens=100) if self.settings.rate_limit.enabled else None
         )
         if rate_result is not None and not rate_result.allowed:
-            self._log_audit(request_id, user_id, "", "rate_limited", error=rate_result.error)
+            span.set_attribute(SpanAttributes.GUARDRAIL_RATE_LIMITED, True)
+            self._log_audit(request_id, user_id, "", "rate_limited", error=rate_result.error, span=span)
             raise RateLimitExceededError(f"Rate limited: {rate_result.error}")
 
         # 2. Input PII filter
@@ -378,6 +438,7 @@ class RouterPolicyEngine:
         # 3. Input abuse filter
         abuse_result = self.abuse_filter.check(full_text) if self.settings.guardrails.abuse_enabled else None
         if abuse_result is not None and not abuse_result.safe:
+            span.set_attribute(SpanAttributes.GUARDRAIL_ABUSE_SAFE, False)
             self._log_audit(
                 request_id,
                 user_id,
@@ -386,6 +447,7 @@ class RouterPolicyEngine:
                 pii_result=pii_result,
                 abuse_result=abuse_result,
                 error=f"Abuse detected: {abuse_result.categories}",
+                span=span,
             )
             raise AbuseDetectedError(f"Abuse detected: {abuse_result.categories}")
 
@@ -396,6 +458,9 @@ class RouterPolicyEngine:
         selected_model = requested_model or routing_result.model_id or self.default_model
         if tools and requested_model is None:
             selected_model = self.default_model
+        span.set_attribute(SpanAttributes.MODEL_SELECTED, selected_model)
+        if routing_result.policy_matched:
+            span.set_attribute(SpanAttributes.ROUTING_POLICY, routing_result.policy_matched)
 
         # 5. Model call
         backend = self.pool.get(selected_model)
@@ -422,13 +487,17 @@ class RouterPolicyEngine:
                 yield chunk
 
         try:
-            async for chunk in _safe_stream(backend):
-                yield chunk
-        except Exception:
-            fallback_model = self.settings.fallback_model
-            if selected_model == fallback_model:
-                raise
-            fallback = self.pool.get(fallback_model)
-            logger.warning("[%s] Streaming fallback from %s to %s", request_id, selected_model, fallback_model)
-            async for chunk in _safe_stream(fallback):
-                yield chunk
+            try:
+                async for chunk in _safe_stream(backend):
+                    yield chunk
+            except Exception as exc:
+                fallback_model = self.settings.fallback_model
+                if selected_model == fallback_model:
+                    span.set_status(otel_trace.Status(otel_trace.StatusCode.ERROR, str(exc)))
+                    raise
+                logger.warning("[%s] Streaming fallback from %s to %s", request_id, selected_model, fallback_model)
+                fallback = self.pool.get(fallback_model)
+                async for chunk in _safe_stream(fallback):
+                    yield chunk
+        finally:
+            span.end()

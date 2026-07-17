@@ -280,6 +280,7 @@ class GatewaySettings(BaseSettings):
     # ── Logging ───────────────────────────────
     log_dir: str = "logs"
     log_level: str = "INFO"
+    audit_retention_days: int = 30
 
     # ── Server ────────────────────────────────
     host: str = "0.0.0.0"

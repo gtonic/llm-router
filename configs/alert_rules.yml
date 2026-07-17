@@ -1,0 +1,65 @@
+# ============================================
+# Prometheus Alert Rules for LLM Router
+# ============================================
+# Visible under Prometheus > Alerts and via the `ALERTS` metric (e.g. in
+# Grafana). No Alertmanager/notification channel is wired up here — add one
+# (Slack/email/PagerDuty webhook) once real receivers are available; until
+# then this makes problems visible on the dashboard instead of silent.
+
+groups:
+  - name: llm-router.rules
+    rules:
+      - alert: LLMRouterDown
+        expr: up{job="llm-router"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "llm-router is not being scraped"
+          description: "Prometheus has not been able to scrape the llm-router /metrics endpoint for 1 minute."
+
+      - alert: LLMRouterAllBackendsDown
+        expr: sum(llm_router_backend_health) == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "All llm-router model backends are unhealthy"
+          description: "Every configured model backend has failed its health check for 2 minutes — the router cannot serve any request."
+
+      - alert: LLMRouterBackendDown
+        expr: llm_router_backend_health == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Backend {{ $labels.model }} is unhealthy"
+          description: "Backend {{ $labels.model }} ({{ $labels.type }}) has been failing health checks for 5 minutes. Other backends may still be serving traffic via fallback."
+
+      - alert: LLMRouterHighErrorRate
+        expr: |
+          sum(rate(llm_router_errors_total[5m])) / clamp_min(sum(rate(llm_router_requests_total[5m])), 1e-9) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "llm-router error rate above 5%"
+          description: "More than 5% of requests have errored over the last 5 minutes."
+
+      - alert: LLMRouterRateLimitSaturation
+        expr: increase(llm_router_rate_limited_total[5m]) > 20
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Clients are being rate limited frequently"
+          description: "More than 20 requests were rate-limited in the last 5 minutes — check for a runaway client or a too-low limit."
+
+      - alert: LLMRouterEmptyResponsesSpike
+        expr: increase(llm_router_empty_responses_total[15m]) > 5
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Backend {{ $labels.model }} is returning empty responses"
+          description: "{{ $labels.model }} produced more than 5 empty (no assistant content) responses in the last 15 minutes."
