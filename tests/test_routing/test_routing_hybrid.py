@@ -36,7 +36,7 @@ class TestHybridRouter:
     def test_route_returns_first_step_model(self):
         import asyncio
 
-        router = HybridRouter()
+        router = HybridRouter(local_model="small_local", remote_model="remote_top")
         result = asyncio.run(router.route([{"role": "user", "content": "Test"}]))
         assert result.model_id == "small_local"  # First step model
         assert result.strategy == "hybrid"
@@ -47,13 +47,22 @@ class TestHybridRouter:
         router = HybridRouter()
         result = asyncio.run(router.route([{"role": "user", "content": "Test"}]))
         plan = result.metadata.get("plan", [])
-        assert len(plan) == 3  # DEFAULT_PLAN has 3 steps
+        assert len(plan) == 3  # build_plan() has 3 steps
         assert "extract_entities" in plan[0]
 
-    def test_default_plan_steps(self):
-        router = HybridRouter()
-        steps = router.DEFAULT_PLAN
+    def test_plan_uses_configured_model_ids(self):
+        router = HybridRouter(local_model="small_local", remote_model="remote_top")
+        steps = router.build_plan().steps
         assert len(steps) == 3
         assert steps[0].model == "small_local"
         assert steps[1].model == "remote_top"
         assert steps[2].model == "small_local"
+
+    def test_defaults_reference_real_configured_backends(self):
+        """Defaults must be plausible real model IDs, not unresolvable placeholders."""
+        router = HybridRouter()
+        steps = router.build_plan().steps
+        assert steps[0].model == router.local_model
+        assert steps[1].model == router.remote_model
+        assert router.local_model != "small_local"
+        assert router.remote_model != "remote_top"

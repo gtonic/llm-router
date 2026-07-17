@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 class RoutingResult:
     """Result from a routing decision."""
 
-    model_id: str
+    model_id: str | None
     strategy: str
     policy_matched: str | None = None
     metadata: dict = field(default_factory=dict)

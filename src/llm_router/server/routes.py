@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from llm_router.guardrails.content_safety import ContentSafetyBlockedError
 from llm_router.models import (
     ChatCompletionChunk,
     ChatCompletionRequest,
@@ -29,6 +30,7 @@ from llm_router.models import (
     UsageInfo as ModelsUsageInfo,
 )
 from llm_router.pool.pool import ModelPool
+from llm_router.router import AbuseDetectedError, RateLimitExceededError
 from llm_router.server.app import (
     PROMETHEUS_ENABLED,
     record_admin_action,
@@ -199,6 +201,8 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
     request_id = str(uuid.uuid4())[:8]
     logger.info("[%s] %s %s", request_id, request.client.host, "POST /v1/chat/completions")
 
+    client_ip = request.client.host if request.client else None
+
     # Non-streaming
     if not body.stream:
         try:
@@ -210,6 +214,7 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
                 model=body.model,
                 tools=body.tools,
                 max_tokens=body.max_tokens,
+                client_ip=client_ip,
             )
             elapsed = time.perf_counter() - start
             elapsed_ms = elapsed * 1000
@@ -231,9 +236,9 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
                     prompt_tokens=result.usage.prompt_tokens,
                     completion_tokens=result.usage.completion_tokens,
                     total_tokens=result.usage.total_tokens,
+                    cost=result.usage.cost,
                 ),
             )
-            response.usage.cost = 0.0  # Will be set by router
 
             # Record Prometheus metrics
             if PROMETHEUS_ENABLED:
@@ -252,6 +257,16 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
             logger.info("[%s] %s %s %.1fms model=%s", request_id, request.client.host, "OK", elapsed_ms, result.model)
             return response
 
+        except RateLimitExceededError as exc:
+            logger.warning("[%s] Rate limited: %s", request_id, exc)
+            if PROMETHEUS_ENABLED:
+                record_error(model=body.model or "unknown", error_type=type(exc).__name__)
+            raise HTTPException(status_code=429, detail=str(exc)) from exc
+        except (AbuseDetectedError, ContentSafetyBlockedError) as exc:
+            logger.warning("[%s] Blocked: %s", request_id, exc)
+            if PROMETHEUS_ENABLED:
+                record_error(model=body.model or "unknown", error_type=type(exc).__name__)
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:
             logger.error("[%s] Error: %s", request_id, exc)
             if PROMETHEUS_ENABLED:
@@ -274,6 +289,7 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
                 model=body.model,
                 tools=body.tools,
                 max_tokens=body.max_tokens,
+                client_ip=client_ip,
             ):
                 streamed_model = chunk.model or streamed_model
                 streamed_usage = chunk.usage
@@ -380,7 +396,7 @@ async def check_guardrails(request: Request):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.post("/admin/reload", dependencies=[Depends(require_admin)])
+@admin_router.post("/reload")
 async def reload_config():
     """Reload policies and models from disk."""
     from llm_router.server.app import router_engine
@@ -389,9 +405,15 @@ async def reload_config():
         raise HTTPException(status_code=503, detail="Router not initialized")
 
     try:
+        router_engine.pool.reload()
         router_engine.policy_matcher._load_policies()
-        # TODO: Also reload model configs
-        return {"status": "reloaded", "policies": len(router_engine.policy_matcher.rules)}
+        router_engine.sync_runtime_models()
+        record_admin_action("reload")
+        return {
+            "status": "reloaded",
+            "policies": len(router_engine.policy_matcher.rules),
+            "models": len(router_engine.pool.list_models()),
+        }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -772,14 +794,27 @@ async def update_guardrails(body: GuardrailConfigUpdate):
         applied.append("pii_max_tokens")
 
     if "pii_patterns" in updates:
-        # Replace PATTERNS with custom ones — need to rebuild compiled regexes
-        custom_patterns = []
-        for i, (name, _compiled) in enumerate(router_engine.pii_filter.PATTERNS):
-            if i < len(updates["pii_patterns"]):
-                custom_patterns.append((name, __import__("re").compile(updates["pii_patterns"][i])))
-            else:
-                custom_patterns.append((name, _compiled))
-        router_engine.pii_filter.PATTERNS = custom_patterns
+        # Replace only the custom patterns (built-ins are left untouched) — mirrors
+        # PiiFilter.__init__'s custom_patterns handling, not a positional overwrite.
+        import re as _re
+
+        builtin_patterns = [
+            (name, compiled)
+            for name, compiled in router_engine.pii_filter.PATTERNS
+            if name not in router_engine.pii_filter._custom_patterns
+        ]
+        new_custom = []
+        new_custom_names = set()
+        for index, raw_pattern in enumerate(updates["pii_patterns"]):
+            try:
+                compiled = _re.compile(raw_pattern)
+            except _re.error:
+                continue
+            name = f"custom_{index}"
+            new_custom.append((name, compiled))
+            new_custom_names.add(name)
+        router_engine.pii_filter.PATTERNS = new_custom + builtin_patterns
+        router_engine.pii_filter._custom_patterns = new_custom_names
         applied.append("pii_patterns")
 
     # Abuse settings
@@ -1085,10 +1120,10 @@ async def get_system_health():
         "backends": backends,
         "routing_strategy": router_engine.routing_strategy.value,
         "guardrails": {
-            "pii_enabled": True,
-            "abuse_enabled": True,
-            "content_safety_enabled": True,
-            "rate_limiting_enabled": True,
+            "pii_enabled": router_engine.settings.guardrails.pii_enabled,
+            "abuse_enabled": router_engine.settings.guardrails.abuse_enabled,
+            "content_safety_enabled": router_engine.settings.guardrails.safety_enabled,
+            "rate_limiting_enabled": router_engine.settings.rate_limit.enabled,
         },
         "policies_loaded": len(router_engine.policy_matcher.rules),
     }

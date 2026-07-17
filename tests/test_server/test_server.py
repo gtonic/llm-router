@@ -552,7 +552,7 @@ class TestGuardrailCheckEndpoint:
 
 class TestAdminReloadEndpoint:
     def _post_reload(self, client):
-        return client.post("/v1/admin/reload")
+        return client.post("/admin/reload")
 
     def test_reload_success(self):
         client = make_test_client()
@@ -591,7 +591,7 @@ class TestAdminReloadEndpoint:
     def test_reload_rejects_invalid_admin_token(self):
         client = make_test_client()
         client.headers["X-Admin-Token"] = "wrong"
-        resp = client.post("/v1/admin/reload")
+        resp = client.post("/admin/reload")
         assert resp.status_code == 401
 
 

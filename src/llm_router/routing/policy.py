@@ -174,7 +174,7 @@ class PolicyMatcher(PolicyBase):
                     metadata={"rule_name": rule.name},
                 )
         return RoutingResult(
-            model_id="default",
+            model_id=None,
             strategy="policy",
             policy_matched=None,
             metadata={"reason": "no_match"},

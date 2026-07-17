@@ -45,6 +45,12 @@ class ModelPool:
         self._health_cache: tuple[float, dict[str, HealthStatus]] | None = None
         self._load_configs()
 
+    def reload(self) -> None:
+        """Reload all backend configs from disk, replacing the current set."""
+        self._backends = {}
+        self._health_cache = None
+        self._load_configs()
+
     def _load_configs(self) -> None:
         """Load model configs from YAML files."""
         if not os.path.isdir(self._models_dir):
@@ -135,13 +141,7 @@ class ModelPool:
         self._health_cache = (now, results)
         return results
 
-    def get_healthy_models(self) -> list[str]:
+    async def get_healthy_models(self) -> list[str]:
         """Return IDs of healthy backends (lazy health check)."""
-        import asyncio
-
-        loop = asyncio.new_event_loop()
-        try:
-            results = loop.run_until_complete(self.health_check_all())
-            return [mid for mid, status in results.items() if status.healthy]
-        finally:
-            loop.close()
+        results = await self.health_check_all()
+        return [mid for mid, status in results.items() if status.healthy]

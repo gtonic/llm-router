@@ -112,9 +112,10 @@ class AbuseFilter:
                     categories.append("encoding_trick")
                     details.append(f"Detected {name} encoding")
 
-        # Check leetspeak
-        for _pattern, _name in self.LEETSPEAK_PATTERNS:
-            if pattern.search(text):
+        # Check leetspeak — require several substitutions so a single stray digit
+        # (e.g. "call me at 3pm") doesn't trip this heuristic.
+        for pattern, _name in self.LEETSPEAK_PATTERNS:
+            if len(pattern.findall(text)) >= 4:
                 score += 0.1
                 if "leetspeak" not in categories:
                     categories.append("leetspeak")

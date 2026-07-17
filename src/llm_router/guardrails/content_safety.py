@@ -46,6 +46,10 @@ class SafetyLevel(StrEnum):
         return NotImplemented
 
 
+class ContentSafetyBlockedError(RuntimeError):
+    """Raised when output content safety blocks a model's response."""
+
+
 @dataclass
 class SafetyCheckResult:
     safe: bool

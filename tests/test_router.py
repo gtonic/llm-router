@@ -678,11 +678,12 @@ class TestRouterStrategyRouting:
         engine.round_robin.route.assert_awaited_once()
         engine.policy_matcher.route.assert_not_called()
 
-    def test_hybrid_strategy_falls_back_to_policy_matcher(self):
+    def test_hybrid_strategy_routes_through_hybrid_router(self):
         engine = self._ready(make_router(routing_strategy=RoutingStrategy.HYBRID))
-        engine.policy_matcher.route = AsyncMock(return_value=MagicMock(model_id="hm", strategy="hybrid"))
+        engine.hybrid_router.route = AsyncMock(return_value=MagicMock(model_id="hm", strategy="hybrid"))
         asyncio.run(engine.generate([{"role": "user", "content": "hi"}]))
-        engine.policy_matcher.route.assert_awaited_once()
+        engine.hybrid_router.route.assert_awaited_once()
+        engine.policy_matcher.route.assert_not_called()
 
     def test_latency_strategy_falls_back_to_policy_matcher(self):
         engine = self._ready(make_router(routing_strategy=RoutingStrategy.LATENCY))
@@ -738,8 +739,27 @@ class TestEdgeCases:
         result = asyncio.run(engine.generate([{"role": "user", "content": "hi"}], user_id=None))
         assert result.content == "x"
 
-    def test_generate_with_api_key_ignored_in_request_id(self):
-        """API key is accepted as parameter but not used in request ID construction."""
+    def test_generate_uses_api_key_for_rate_limit_when_no_user_id(self):
+        """When user_id is absent, api_key is used as the rate-limit client identifier."""
+        engine = make_router()
+        engine.rate_limiter.check = AsyncMock(return_value=MagicMock(allowed=True, remaining_requests=59))
+        engine.abuse_filter.check.return_value = MagicMock(safe=True, categories=[], abuse_score=0)
+        engine.pii_filter.check.return_value = MagicMock(has_pii=False, patterns=[])
+        engine.policy_matcher.route = AsyncMock(return_value=MagicMock(model_id="m", strategy="policy"))
+        engine.pool.get.return_value.generate = AsyncMock(
+            return_value=GenerateResult(
+                content="x",
+                model="m",
+                usage=UsageInfo(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+                finish_reason="stop",
+                latency_ms=1.0,
+            )
+        )
+        asyncio.run(engine.generate([{"role": "user", "content": "hi"}], user_id=None, api_key="sk-xxx"))
+        engine.rate_limiter.check.assert_awaited_once_with(client_id="sk-xxx", tokens=100)
+
+    def test_generate_uses_user_id_for_rate_limit_over_api_key(self):
+        """user_id takes precedence over api_key as the rate-limit client identifier."""
         engine = make_router()
         engine.rate_limiter.check = AsyncMock(return_value=MagicMock(allowed=True, remaining_requests=59))
         engine.abuse_filter.check.return_value = MagicMock(safe=True, categories=[], abuse_score=0)
@@ -755,7 +775,7 @@ class TestEdgeCases:
             )
         )
         asyncio.run(engine.generate([{"role": "user", "content": "hi"}], user_id="u1", api_key="sk-xxx"))
-        assert engine.rate_limiter.check.called
+        engine.rate_limiter.check.assert_awaited_once_with(client_id="u1", tokens=100)
 
     def test_generate_stream_with_explicit_model_uses_it(self):
         engine = make_router()
@@ -872,13 +892,13 @@ class TestStreamFallbackStrategies:
         assert engine.pool.get.call_args_list[0].args == ("primary",)
         assert engine.pool.get.call_args_list[1].args == ("fallback",)
 
-    def test_stream_hybrid_strategy_calls_policy_matcher(self):
-        """HYBRID strategy falls through to policy matcher in generate_stream."""
+    def test_stream_hybrid_strategy_routes_through_hybrid_router(self):
+        """HYBRID strategy routes through hybrid_router in generate_stream."""
         engine = make_router(routing_strategy=RoutingStrategy.HYBRID)
         engine.rate_limiter.check = AsyncMock(return_value=MagicMock(allowed=True, remaining_requests=59))
         engine.abuse_filter.check.return_value = MagicMock(safe=True, categories=[])
         engine.pii_filter.check.return_value = MagicMock(has_pii=False, patterns=[])
-        engine.policy_matcher.route = AsyncMock(return_value=MagicMock(model_id="hybrid-model", strategy="policy"))
+        engine.hybrid_router.route = AsyncMock(return_value=MagicMock(model_id="hybrid-model", strategy="hybrid"))
 
         async def _stream_gen(messages):
             yield GenerateResult(
@@ -900,8 +920,8 @@ class TestStreamFallbackStrategies:
         chunks = asyncio.run(_collect())
         assert len(chunks) == 1
         assert chunks[0].model == "hybrid-model"
-        # policy_matcher.route should be called (fallback)
-        engine.policy_matcher.route.assert_awaited_once()
+        engine.hybrid_router.route.assert_awaited_once()
+        engine.policy_matcher.route.assert_not_called()
 
     def test_stream_latency_strategy_calls_policy_matcher(self):
         """LATENCY strategy falls through to policy matcher in generate_stream."""

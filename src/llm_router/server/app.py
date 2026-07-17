@@ -269,7 +269,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         if invalid_targets:
             raise ValueError(f"Policies reference unknown models: {sorted(invalid_targets)}")
     complexity_detector = ComplexityDetector()
-    hybrid_router = HybridRouter()
+    hybrid_router = HybridRouter(local_model=settings.default_model, remote_model=settings.fallback_model)
     round_robin = RoundRobinPolicy(model_pool.list_models())
 
     # Create the main router engine

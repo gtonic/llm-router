@@ -7,6 +7,7 @@ standard ``yaml.safe_load`` helpers.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import tempfile
@@ -19,8 +20,17 @@ from typing import Any, Literal
 import yaml
 from pydantic_settings import BaseSettings
 
+logger = logging.getLogger("llm-router")
+
 # Pattern to match ${VAR_NAME} placeholders in strings
 _ENV_VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def _env_var_name_for_model(model_id: str) -> str:
+    """Derive a deterministic env-var name to hold a runtime-added backend's API key."""
+    sanitized = re.sub(r"[^A-Za-z0-9]+", "_", model_id).strip("_").upper() or "BACKEND"
+    return f"ROUTER_MODEL_{sanitized}_API_KEY"
+
 
 # ───────────────────────────────────────────
 # Enums
@@ -351,8 +361,21 @@ class GatewaySettings(BaseSettings):
         serialised_models = []
         for model in models:
             model_data = model.to_dict()
-            if model.is_remote and "api.openai.com" in model.base_url and model.api_key:
-                model_data["api_key"] = "${OPENAI_API_KEY}"
+            if model.is_remote and model.api_key:
+                if "api.openai.com" in model.base_url:
+                    model_data["api_key"] = "${OPENAI_API_KEY}"
+                else:
+                    # Never write a resolved secret to this (often git-tracked) file: persist a
+                    # placeholder env-var reference instead and require the operator to set it.
+                    env_name = _env_var_name_for_model(model.id)
+                    model_data["api_key"] = f"${{{env_name}}}"
+                    logger.warning(
+                        "Backend '%s' has a literal API key; writing placeholder '${%s}' to %s instead of "
+                        "the plaintext secret. Set that environment variable so the credential survives a restart.",
+                        model.id,
+                        env_name,
+                        path,
+                    )
             serialised_models.append(model_data)
         with open(path, "w", encoding="utf-8") as fh:
             yaml.dump(serialised_models, fh, default_flow_style=False, sort_keys=False)

@@ -129,7 +129,7 @@ rules:
             import asyncio
 
             result = asyncio.run(matcher.route([{"role": "user", "content": "Hello"}]))
-            assert result.model_id == "default"
+            assert result.model_id is None
             assert result.metadata.get("reason") == "no_match"
         finally:
             import shutil

@@ -3,39 +3,46 @@
 > Master task list für den policybasierten LLM-Gateway-Router auf LangChain-Basis.
 > Jeder Task ist unabhängig umsetzbar. Mit `[x]` abhaken wenn erledigt.
 
+> **Status (2026-07-17):** Alle Phasen unten sind implementiert (siehe `src/llm_router/`).
+> Dieses Dokument ist die ursprüngliche Bauanleitung und dient jetzt als historische
+> Referenz für Modul-Zuschnitt und Akzeptanzkriterien — nicht als aktuelles Backlog.
+> Offene/neue Arbeit bitte als Issues statt hier tracken. Die Summary-Tabelle unten
+> wurde auf den tatsächlichen Stand aktualisiert; die Detail-Checkboxen je Task
+> spiegeln weiterhin die ursprüngliche Spezifikation.
+
 ---
 
 ## 📊 Summary
 
 | Phase | Task | Beschreibung | Status | Dependencies |
 |---|---|---|---|---|
-| **P0** | 1 | Projekt-Setup & Struktur | ⬜ TODO | — |
-| **P0** | 2 | config.py — Settings & Pydantic-Modelle | ⬜ TODO | 1 |
-| **P1** | 3 | models.py — Request/Response Models | ⬜ TODO | 1 |
-| **P1** | 4 | pool/base.py — ModelBackend ABC | ⬜ TODO | 1 |
-| **P1** | 5 | pool/local.py — LlamaCPPBackend | ⬜ TODO | 4 |
-| **P1** | 6 | pool/remote.py — RemoteBackend | ⬜ TODO | 4 |
-| **P1** | 7 | pool/pool.py — ModelPool | ⬜ TODO | 5, 6 |
-| **P2** | 8 | tracing/ — OpenTelemetry Setup | ⬜ TODO | 1 |
-| **P2** | 9 | routing/base.py — PolicyBase ABC | ⬜ TODO | 1 |
-| **P2** | 10 | routing/complexity.py — Komplexitäts-Detektor | ⬜ TODO | 9 |
-| **P2** | 11 | routing/policy.py — PolicyMatcher (YAML) | ⬜ TODO | 9 |
-| **P2** | 12 | routing/hybrid.py — Hybrid-Routing | ⬜ TODO | 10, 11 |
-| **P2** | 13 | routing/round_robin.py — Lastverteilung | ⬜ TODO | 9 |
-| **P3** | 14 | guardrails/rate_limiter.py — Rate Limiting | ⬜ TODO | 1 |
-| **P3** | 15 | guardrails/pii_filter.py — PII-Erkennung | ⬜ TODO | 1 |
-| **P3** | 16 | guardrails/abuse_filter.py — Abuse/Moderation | ⬜ TODO | 1 |
-| **P3** | 17 | guardrails/content_safety.py — Content Safety | ⬜ TODO | 1 |
-| **P4** | 18 | router.py — Hauptklasse: RouterPolicyEngine | ⬜ TODO | 7, 10-13, 15-17 |
-| **P4** | 19 | server/app.py — FastAPI App-Factory | ⬜ TODO | 18 |
-| **P4** | 20 | server/routes.py — Endpunkte | ⬜ TODO | 18, 19 |
-| **P5** | 21 | Logging — JSONL Audit-Logging | ⬜ TODO | 18 |
-| **P5** | 22 | Policy-Konfiguration — default.yaml | ⬜ TODO | 11 |
-| **P5** | 23 | Model-Profile — local.yaml, remote.yaml | ⬜ TODO | 5, 6 |
-| **P5** | 24 | .env.example & Dokumentation | ⬜ TODO | 1-23 |
-| **P6** | 25 | Tests — Unit Tests für alle Module | ⬜ TODO | alle |
-| **P6** | 26 | Tests — Integrationstests (E2E) | ⬜ TODO | 25 |
-| **P6** | 27 | README.md aktualisieren | ⬜ TODO | 25, 26 |
+| **P0** | 1 | Projekt-Setup & Struktur | ✅ Done | — |
+| **P0** | 2 | config.py — Settings & Pydantic-Modelle | ✅ Done | 1 |
+| **P1** | 3 | models.py — Request/Response Models | ✅ Done | 1 |
+| **P1** | 4 | pool/base.py — ModelBackend ABC | ✅ Done | 1 |
+| **P1** | 5 | pool/local.py — LlamaCPPBackend | ✅ Done | 4 |
+| **P1** | 6 | pool/remote.py — RemoteBackend | ✅ Done | 4 |
+| **P1** | 7 | pool/pool.py — ModelPool | ✅ Done | 5, 6 |
+| **P2** | 8 | tracing/ — OpenTelemetry Setup | ✅ Done | 1 |
+| **P2** | 9 | routing/base.py — PolicyBase ABC | ✅ Done | 1 |
+| **P2** | 10 | routing/complexity.py — Komplexitäts-Detektor | ✅ Done | 9 |
+| **P2** | 11 | routing/policy.py — PolicyMatcher (YAML) | ✅ Done | 9 |
+| **P2** | 12 | routing/hybrid.py — Hybrid-Routing | ✅ Done | 10, 11 |
+| **P2** | 13 | routing/round_robin.py — Lastverteilung | ✅ Done | 9 |
+| **P3** | 14 | guardrails/rate_limiter.py — Rate Limiting | ✅ Done | 1 |
+| **P3** | 15 | guardrails/pii_filter.py — PII-Erkennung | ✅ Done | 1 |
+| **P3** | 16 | guardrails/abuse_filter.py — Abuse/Moderation | ✅ Done | 1 |
+| **P3** | 17 | guardrails/content_safety.py — Content Safety | ✅ Done | 1 |
+| **P4** | 18 | router.py — Hauptklasse: RouterPolicyEngine | ✅ Done | 7, 10-13, 15-17 |
+| **P4** | 19 | server/app.py — FastAPI App-Factory | ✅ Done | 18 |
+| **P4** | 20 | server/routes.py — Endpunkte | ✅ Done | 18, 19 |
+| **P5** | 21 | Logging — JSONL Audit-Logging | ✅ Done | 18 |
+| **P5** | 22 | Policy-Konfiguration — default.yaml | ✅ Done | 11 |
+| **P5** | 23 | Model-Profile — local.yaml, remote.yaml | ✅ Done | 5, 6 |
+| **P5** | 24 | .env.example & Dokumentation | ✅ Done | 1-23 |
+| **P6** | 25 | Tests — Unit Tests für alle Module | ✅ Done | alle |
+| **P6** | 26 | Tests — Integrationstests (E2E) | ✅ Done | 25 |
+| **P6** | 27 | README.md aktualisieren | ✅ Done | 25, 26 |
 
 ---
 

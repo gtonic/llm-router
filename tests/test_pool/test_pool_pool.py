@@ -170,12 +170,40 @@ class TestModelPoolHealth:
         assert results["fail"].healthy is False
         assert "boom" in results["fail"].error
 
-    def test_get_healthy_models(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_get_healthy_models(self, tmp_path):
         pool = ModelPool(models_dir=str(tmp_path))
         cfg = ModelBackendConfig(id="healthy-1", name="H1", type="local", base_url="http://x")
         pool.add_backend(cfg, DummyBackend(cfg))
-        healthy = pool.get_healthy_models()
+        healthy = await pool.get_healthy_models()
         assert "healthy-1" in healthy
+
+
+class TestModelPoolReload:
+    def test_reload_picks_up_disk_changes(self, tmp_path):
+        (tmp_path / "models.yaml").write_text(
+            "- id: model-a\n  name: Model A\n  type: local\n  base_url: http://x\n",
+            encoding="utf-8",
+        )
+        pool = ModelPool(models_dir=str(tmp_path))
+        assert pool.list_models() == ["model-a"]
+
+        (tmp_path / "models.yaml").write_text(
+            "- id: model-b\n  name: Model B\n  type: local\n  base_url: http://y\n",
+            encoding="utf-8",
+        )
+        pool.reload()
+        assert pool.list_models() == ["model-b"]
+
+    def test_reload_clears_health_cache(self, tmp_path):
+        (tmp_path / "models.yaml").write_text(
+            "- id: model-a\n  name: Model A\n  type: local\n  base_url: http://x\n",
+            encoding="utf-8",
+        )
+        pool = ModelPool(models_dir=str(tmp_path))
+        pool._health_cache = (0.0, {})
+        pool.reload()
+        assert pool._health_cache is None
 
 
 class TestModelPoolCreateBackend:
