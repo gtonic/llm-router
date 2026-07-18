@@ -21,6 +21,22 @@ from llm_router.pool.base import (
 )
 
 
+def _chat_template_kwargs(kwargs: dict) -> dict:
+    """Chat-template kwargs for the local model.
+
+    Defaults ``enable_thinking`` to False so Qwen3.x does not emit ``<think>``
+    blocks (the local model is always served thinking-off in this deployment).
+    ``reasoning_format: none`` only affects how reasoning is *returned*, not
+    whether it is generated — only this template kwarg suppresses generation.
+    Any client-supplied ``chat_template_kwargs`` (if threaded through) wins.
+    """
+    ctk = {"enable_thinking": False}
+    client_ctk = kwargs.get("chat_template_kwargs")
+    if isinstance(client_ctk, dict):
+        ctk.update(client_ctk)
+    return ctk
+
+
 def _response_content(response) -> str:
     """Return assistant text from standard or reasoning-only LangChain responses."""
     content = getattr(response, "content", "")
@@ -95,7 +111,10 @@ class LlamaCPPBackend(ModelBackend):
                 )
 
         client = self._client.bind_tools(tools) if tools else self._client
-        invoke_kwargs = {"timeout": self.config.timeout, "extra_body": {"reasoning_format": "none"}}
+        invoke_kwargs = {
+            "timeout": self.config.timeout,
+            "extra_body": {"reasoning_format": "none", "chat_template_kwargs": _chat_template_kwargs(kwargs)},
+        }
         if max_tokens is not None:
             invoke_kwargs["max_tokens"] = max_tokens
         response = await client.ainvoke(lc_messages, **invoke_kwargs)
@@ -146,7 +165,10 @@ class LlamaCPPBackend(ModelBackend):
 
         client = self._client.bind_tools(tools) if tools else self._client
         streamed_tool_calls = []
-        stream_kwargs = {"timeout": self.config.timeout, "extra_body": {"reasoning_format": "none"}}
+        stream_kwargs = {
+            "timeout": self.config.timeout,
+            "extra_body": {"reasoning_format": "none", "chat_template_kwargs": _chat_template_kwargs(kwargs)},
+        }
         if max_tokens is not None:
             stream_kwargs["max_tokens"] = max_tokens
         async for chunk in client.astream(lc_messages, **stream_kwargs):

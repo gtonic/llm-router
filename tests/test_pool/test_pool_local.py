@@ -109,7 +109,10 @@ class TestLlamaCPPBackendGenerate:
         call_args = backend._client.ainvoke.call_args
         lc_messages = call_args[0][0]
         assert len(lc_messages) == 2
-        assert call_args.kwargs["extra_body"] == {"reasoning_format": "none"}
+        assert call_args.kwargs["extra_body"] == {
+            "reasoning_format": "none",
+            "chat_template_kwargs": {"enable_thinking": False},
+        }
 
     @pytest.mark.asyncio
     async def test_generate_uses_reasoning_content_when_content_is_empty(self):
