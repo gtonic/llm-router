@@ -181,6 +181,38 @@ class TestLlamaCPPBackendStream:
         assert chunks[0].content == "chunk"
         assert chunks[0].model == "llama"
 
+    async def test_generate_stream_emits_terminal_usage_chunk(self):
+        cfg = ModelBackendConfig(
+            id="llama",
+            name="Llama",
+            type="local",
+            base_url="http://localhost:8080/v1",
+            model_name="llama",
+            cost_per_1m_input=1.0,
+            cost_per_1m_output=2.0,
+        )
+        backend = LlamaCPPBackend(cfg)
+
+        content_chunk = MagicMock()
+        content_chunk.content = "hello"
+        content_chunk.usage_metadata = None
+        final_chunk = MagicMock()
+        final_chunk.content = ""
+        final_chunk.usage_metadata = {"input_tokens": 10, "output_tokens": 20, "total_tokens": 30}
+
+        backend._ensure_client = MagicMock()
+        backend._client = MagicMock()
+        backend._client.astream = lambda *a, **k: AsyncIteratorMock([content_chunk, final_chunk])
+
+        chunks = [c async for c in backend.generate_stream([{"role": "user", "content": "Hi"}])]
+
+        usage_chunks = [c for c in chunks if c.usage.total_tokens]
+        assert len(usage_chunks) == 1
+        assert usage_chunks[0].usage.prompt_tokens == 10
+        assert usage_chunks[0].usage.completion_tokens == 20
+        assert usage_chunks[0].usage.total_tokens == 30
+        assert usage_chunks[0].usage.cost == backend._calculate_cost(10, 20)
+
 
 class TestLlamaCPPBackendHealth:
     def _make_httpx_mock(self, status_code: int = 200):

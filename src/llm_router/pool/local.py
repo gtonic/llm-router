@@ -90,6 +90,10 @@ class LlamaCPPBackend(ModelBackend):
                 api_key=self.config.api_key or "sk-not-required",
                 temperature=self.config.temperature,
                 max_tokens=self.config.max_tokens,
+                # Request token usage on the final stream chunk so streaming
+                # requests can be accounted like non-streaming ones. Servers that
+                # ignore stream_options simply omit it (we fall back to zeros).
+                stream_usage=True,
                 timeout=httpx.Timeout(
                     self.config.read_timeout,
                     connect=self.config.connect_timeout,
@@ -178,6 +182,7 @@ class LlamaCPPBackend(ModelBackend):
 
         client = self._client.bind_tools(tools) if tools else self._client
         streamed_tool_calls = []
+        usage_metadata: dict | None = None
         stream_kwargs = {
             "timeout": self.config.timeout,
             "extra_body": {"reasoning_format": "none", "chat_template_kwargs": _chat_template_kwargs(kwargs)},
@@ -188,6 +193,9 @@ class LlamaCPPBackend(ModelBackend):
             content = _response_content(chunk)
             tool_calls = normalize_tool_calls(getattr(chunk, "tool_call_chunks", None))
             merge_tool_calls(streamed_tool_calls, tool_calls)
+            chunk_usage = getattr(chunk, "usage_metadata", None)
+            if isinstance(chunk_usage, dict):
+                usage_metadata = chunk_usage
             yield GenerateResult(
                 content=content if isinstance(content, str) else "",
                 model=self.config.model_name,
@@ -206,6 +214,9 @@ class LlamaCPPBackend(ModelBackend):
                 tool_calls=streamed_tool_calls,
                 latency_ms=0,
             )
+        # Terminal accounting chunk with real token usage, if the server reported it.
+        if usage_metadata:
+            yield self._usage_chunk(usage_metadata)
 
     async def health_check(self) -> HealthStatus:
         start = time.perf_counter()

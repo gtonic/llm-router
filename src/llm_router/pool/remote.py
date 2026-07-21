@@ -40,17 +40,15 @@ class RemoteBackend(ModelBackend):
                 api_key=self.config.api_key,
                 temperature=self.config.temperature,
                 max_tokens=self.config.max_tokens,
+                # Ask the API to include token usage on the final stream chunk so
+                # streaming requests can be accounted (tokens + cost), not just
+                # non-streaming ones.
+                stream_usage=True,
                 timeout=httpx.Timeout(
                     self.config.read_timeout,
                     connect=self.config.connect_timeout,
                 ),
             )
-
-    def _calculate_cost(self, prompt_tokens: int, completion_tokens: int) -> float:
-        """Estimate cost based on model configuration."""
-        input_cost = prompt_tokens / 1_000_000 * self.config.cost_per_1m_input
-        output_cost = completion_tokens / 1_000_000 * self.config.cost_per_1m_output
-        return round(input_cost + output_cost, 10)
 
     async def generate(
         self,
@@ -136,6 +134,7 @@ class RemoteBackend(ModelBackend):
 
         client = self._client.bind_tools(tools) if tools else self._client
         streamed_tool_calls = []
+        usage_metadata: dict | None = None
         stream_kwargs = {"timeout": self.config.timeout}
         if max_tokens is not None:
             stream_kwargs["max_tokens"] = max_tokens
@@ -143,6 +142,9 @@ class RemoteBackend(ModelBackend):
             content = chunk.content if hasattr(chunk, "content") else ""
             tool_calls = normalize_tool_calls(getattr(chunk, "tool_call_chunks", None))
             merge_tool_calls(streamed_tool_calls, tool_calls)
+            chunk_usage = getattr(chunk, "usage_metadata", None)
+            if isinstance(chunk_usage, dict):
+                usage_metadata = chunk_usage
             yield GenerateResult(
                 content=content if isinstance(content, str) else "",
                 model=self.config.model_name,
@@ -161,6 +163,10 @@ class RemoteBackend(ModelBackend):
                 tool_calls=streamed_tool_calls,
                 latency_ms=0,
             )
+        # Terminal accounting chunk with real token usage + cost, if the API
+        # reported it (stream_usage). Content-less: consumers read usage, not text.
+        if usage_metadata:
+            yield self._usage_chunk(usage_metadata)
 
     async def health_check(self) -> HealthStatus:
         start = time.perf_counter()

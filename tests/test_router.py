@@ -414,16 +414,51 @@ class TestGenerateStream:
         self._mock_pii_no_pii(engine)
         self._mock_policy_route(engine)
 
+        def _empty():
+            # Real backends emit content-less body chunks with zero usage.
+            return GenerateResult(
+                content="", model="test-model", usage=UsageInfo(0, 0, 0), finish_reason="stop", latency_ms=0.0
+            )
+
         async def _stream(messages):
-            yield self._stream_result("")
+            yield _empty()
             yield self._stream_result("visible")
-            yield self._stream_result("")
+            yield _empty()
 
         engine.pool.get.return_value.generate_stream = _stream
 
         chunks = asyncio.run(self._consume_stream(engine))
 
         assert [chunk.content for chunk in chunks] == ["visible"]
+
+    def test_stream_forwards_terminal_usage_chunk(self):
+        """The content-less terminal chunk carrying token usage is forwarded so
+        the route layer can account tokens/cost for streaming requests."""
+        engine = make_router()
+        self._mock_rate_ok(engine)
+        self._mock_abuse_safe(engine)
+        self._mock_pii_no_pii(engine)
+        self._mock_policy_route(engine)
+
+        async def _stream(messages):
+            yield GenerateResult(
+                content="hi", model="test-model", usage=UsageInfo(0, 0, 0), finish_reason="incomplete", latency_ms=0
+            )
+            yield GenerateResult(
+                content="",
+                model="test-model",
+                usage=UsageInfo(prompt_tokens=3, completion_tokens=5, total_tokens=8, cost=0.01),
+                finish_reason="stop",
+                latency_ms=0,
+            )
+
+        engine.pool.get.return_value.generate_stream = _stream
+
+        chunks = asyncio.run(self._consume_stream(engine))
+
+        assert [c.content for c in chunks] == ["hi", ""]
+        assert chunks[-1].usage.total_tokens == 8
+        assert chunks[-1].usage.cost == 0.01
 
     def test_stream_keeps_tool_call_chunks_without_content(self):
         engine = make_router()

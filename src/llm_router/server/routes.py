@@ -335,7 +335,14 @@ async def chat_completions(
                 client_ip=client_ip,
             ):
                 streamed_model = chunk.model or streamed_model
-                streamed_usage = chunk.usage
+                # Keep the real token usage from the terminal accounting chunk
+                # (content chunks carry zeros); don't let it be overwritten back.
+                if chunk.usage and chunk.usage.total_tokens:
+                    streamed_usage = chunk.usage
+                # The terminal accounting chunk has no content/tool_calls — capture
+                # its usage above but don't emit an empty delta to the client.
+                if not chunk.content and not chunk.tool_calls:
+                    continue
                 if PROMETHEUS_ENABLED:
                     now = time.perf_counter()
                     # First frame: first streamed chunk of any kind (prefill + connect).

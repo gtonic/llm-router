@@ -15,7 +15,7 @@ from llm_router.guardrails.content_safety import ContentSafety, ContentSafetyBlo
 from llm_router.guardrails.pii_filter import PiiFilter
 from llm_router.guardrails.rate_limiter import RateLimiter
 from llm_router.logging_setup import AuditEntry, AuditLogger
-from llm_router.pool.base import EmptyResponseError, GenerateResult
+from llm_router.pool.base import EmptyResponseError, GenerateResult, UsageInfo
 from llm_router.pool.circuit_breaker import CircuitBreaker
 from llm_router.pool.pool import ModelPool
 from llm_router.routing.base import RoutingResult
@@ -78,11 +78,18 @@ async def _generate_with_retry(backend, messages: list[dict], **kwargs):
 
 
 async def _generate_stream_with_content(backend, messages: list[dict], **kwargs) -> AsyncIterator[GenerateResult]:
-    """Yield meaningful stream chunks or fail so the caller can use its fallback."""
+    """Yield meaningful stream chunks or fail so the caller can use its fallback.
+
+    A content-less terminal chunk carrying token usage (for accounting) is still
+    forwarded once real content has been produced, so callers can record
+    tokens/cost — but an entirely empty stream still raises.
+    """
     yielded_content = False
     async for chunk in backend.generate_stream(messages, **kwargs):
         if chunk.content or chunk.tool_calls:
             yielded_content = True
+            yield chunk
+        elif yielded_content and chunk.usage and chunk.usage.total_tokens:
             yield chunk
     if not yielded_content:
         raise EmptyResponseError(f"Backend '{backend.config.id}' returned an empty stream")
@@ -234,6 +241,11 @@ class RouterPolicyEngine:
         if breaker is not None:
             breaker.record_success()
         return result
+
+    @staticmethod
+    def _stream_result(model_id: str, usage: UsageInfo | None) -> GenerateResult:
+        """Wrap streamed token usage in a GenerateResult for the audit log."""
+        return GenerateResult(content="", model=model_id, usage=usage or UsageInfo(0, 0, 0), finish_reason="stop")
 
     async def _route(self, messages: list[dict], routing_messages: list[dict]) -> RoutingResult:
         """Dispatch to the sub-router matching ``routing_strategy``.
@@ -595,10 +607,19 @@ class RouterPolicyEngine:
                 breaker.record_success()
 
         yielded_to_client = False
+        final_usage: UsageInfo | None = None
+        span_ended = False
+
+        def _capture(chunk: GenerateResult) -> None:
+            nonlocal final_usage
+            if chunk.usage and chunk.usage.total_tokens:
+                final_usage = chunk.usage
+
         try:
             try:
                 async for chunk in _run(selected_model):
                     yielded_to_client = True
+                    _capture(chunk)
                     yield chunk
             except Exception as exc:
                 fallback_model = self.settings.fallback_model
@@ -610,7 +631,24 @@ class RouterPolicyEngine:
                     span.set_status(otel_trace.Status(otel_trace.StatusCode.ERROR, str(exc)))
                     raise
                 logger.warning("[%s] Streaming fallback from %s to %s", request_id, selected_model, fallback_model)
+                selected_model = fallback_model
                 async for chunk in _run(fallback_model):
+                    _capture(chunk)
                     yield chunk
+            # Success — write the audit entry with real streamed token usage/cost
+            # (the non-streaming path already does this; streaming used to skip it).
+            self._log_audit(
+                request_id,
+                user_id,
+                selected_model,
+                "success",
+                routing_result=routing_result,
+                pii_result=pii_result,
+                abuse_result=abuse_result,
+                result=self._stream_result(selected_model, final_usage),
+                span=span,
+            )
+            span_ended = True
         finally:
-            span.end()
+            if not span_ended:
+                span.end()

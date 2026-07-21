@@ -124,6 +124,34 @@ class ModelBackend(ABC):
     def __init__(self, config: ModelBackendConfig) -> None:
         self.config = config
 
+    def _calculate_cost(self, prompt_tokens: int, completion_tokens: int) -> float:
+        """Estimate request cost (USD) from the backend's per-1M token prices."""
+        input_cost = prompt_tokens / 1_000_000 * self.config.cost_per_1m_input
+        output_cost = completion_tokens / 1_000_000 * self.config.cost_per_1m_output
+        return round(input_cost + output_cost, 10)
+
+    def _usage_chunk(self, usage_metadata: dict) -> GenerateResult:
+        """Build a content-less terminal stream chunk carrying token usage + cost.
+
+        ``usage_metadata`` is LangChain's dict form (input_tokens / output_tokens
+        / total_tokens). Streaming callers read the usage; the text is empty.
+        """
+        prompt_tokens = int(usage_metadata.get("input_tokens", 0) or 0)
+        completion_tokens = int(usage_metadata.get("output_tokens", 0) or 0)
+        total_tokens = int(usage_metadata.get("total_tokens", 0) or 0) or (prompt_tokens + completion_tokens)
+        return GenerateResult(
+            content="",
+            model=self.config.model_name,
+            usage=UsageInfo(
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=total_tokens,
+                cost=self._calculate_cost(prompt_tokens, completion_tokens),
+            ),
+            finish_reason="stop",
+            latency_ms=0,
+        )
+
     # ── Abstract methods ──────────────────────
 
     @abstractmethod
