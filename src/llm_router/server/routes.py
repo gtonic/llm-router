@@ -392,9 +392,16 @@ async def chat_completions(
                 record_error(model=body.model or "unknown", error_type=type(exc).__name__)
                 if type(exc).__name__ == "EmptyResponseError":
                     record_empty_response(body.model or "unknown")
+            # Don't echo raw exception text (may leak internals) — log it above,
+            # send the client a generic message correlated by request_id.
             error_chunk = ChatCompletionChunk(
                 model="error",
-                choices=[ChunkChoice(delta={"content": str(exc)}, finish_reason="error")],
+                choices=[
+                    ChunkChoice(
+                        delta={"content": f"Internal error during streaming (request {request_id})"},
+                        finish_reason="error",
+                    )
+                ],
             )
             yield f"data: {error_chunk.model_dump_json()}\n\n"
             yield "data: [DONE]\n\n"
@@ -1251,14 +1258,14 @@ async def get_system_capabilities():
                 "description": "Get system self-description",
                 "method": "GET",
                 "endpoint": "/system/manifest",
-                "auth_required": False,
+                "auth_required": True,
             },
             {
                 "action": "get_metrics",
                 "description": "Fetch current metrics",
                 "method": "GET",
                 "endpoint": "/system/metrics",
-                "auth_required": False,
+                "auth_required": True,
             },
             {
                 "action": "manage_models",

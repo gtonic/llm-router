@@ -53,6 +53,10 @@ class BackendUnavailableError(RuntimeError):
 # over to another backend won't help, so we surface them directly.
 _NON_RETRYABLE_STATUS = {400, 401, 403, 404, 422}
 
+# Sliding-window size (chars) for streaming content-safety scans. Must be well
+# above the longest safety keyword so boundary-spanning matches are still caught.
+_SAFETY_WINDOW_CHARS = 512
+
 
 def _is_client_error(exc: Exception) -> bool:
     """Return True for non-retryable 4xx errors (bad request, auth, not found)."""
@@ -262,7 +266,46 @@ class RouterPolicyEngine:
             return await self.hybrid_router.route(messages)
         if strategy == RoutingStrategy.ROUND_ROBIN:
             return await self.round_robin.route(messages)
-        return await self.policy_matcher.route(messages)
+        if strategy == RoutingStrategy.LATENCY:
+            return await self._route_latency()
+        if strategy == RoutingStrategy.COST:
+            return self._route_cost()
+        return await self.policy_matcher.route(routing_messages)
+
+    def _enabled_models(self) -> list[str]:
+        """Best-effort list of enabled backend IDs (empty if the pool can't list)."""
+        list_models = getattr(self.pool, "list_models", None)
+        try:
+            return list(list_models()) if callable(list_models) else []
+        except Exception:
+            return []
+
+    def _route_cost(self) -> RoutingResult:
+        """Route to the cheapest enabled backend by configured per-1M token price."""
+        cheapest, best_price = None, None
+        for model_id in self._enabled_models():
+            cfg = self.pool.get(model_id).config
+            price = getattr(cfg, "cost_per_1m_input", 0.0) + getattr(cfg, "cost_per_1m_output", 0.0)
+            if best_price is None or price < best_price:
+                best_price, cheapest = price, model_id
+        return RoutingResult(
+            model_id=cheapest or self.default_model, strategy="cost", metadata={"price_per_1m": best_price}
+        )
+
+    async def _route_latency(self) -> RoutingResult:
+        """Route to the healthy backend with the lowest recent health-check latency."""
+        fastest, best = None, None
+        try:
+            health = await self.pool.health_check_all()
+        except Exception:
+            health = {}
+        for model_id, status in (health or {}).items():
+            if not getattr(status, "healthy", False):
+                continue
+            latency = getattr(status, "latency_ms", None)
+            if latency is not None and (best is None or latency < best):
+                best, fastest = latency, model_id
+        return RoutingResult(model_id=fastest or self.default_model, strategy="latency", metadata={"latency_ms": best})
 
     def _log_audit(
         self,
@@ -575,12 +618,18 @@ class RouterPolicyEngine:
         safety_enabled = self.settings.guardrails.safety_enabled
 
         async def _safe_stream(source_backend) -> AsyncIterator[GenerateResult]:
-            """Stream chunks, stopping (without a fallback retry) if output is blocked."""
-            accumulated = ""
+            """Stream chunks, stopping (without a fallback retry) if output is blocked.
+
+            Content safety scans a bounded sliding window (not the whole growing
+            buffer every chunk), keeping this O(n) instead of O(n^2) on long
+            responses. The window overlaps chunk boundaries so keywords split
+            across chunks are still caught.
+            """
+            window = ""
             async for chunk in _generate_stream_with_content(source_backend, messages, **backend_kwargs):
-                if safety_enabled:
-                    accumulated += chunk.content or ""
-                    safety_result = self.content_safety.check(accumulated)
+                if safety_enabled and chunk.content:
+                    window = (window + chunk.content)[-_SAFETY_WINDOW_CHARS:]
+                    safety_result = self.content_safety.check(window)
                     if not safety_result.safe and safety_result.action == "block":
                         logger.warning(
                             "[%s] Streaming output blocked by content safety: %s",

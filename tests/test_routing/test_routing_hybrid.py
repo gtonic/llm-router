@@ -33,13 +33,23 @@ class TestHybridPlan:
 
 
 class TestHybridRouter:
-    def test_route_returns_first_step_model(self):
+    def test_route_uses_local_for_simple_request(self):
         import asyncio
 
         router = HybridRouter(local_model="small_local", remote_model="remote_top")
         result = asyncio.run(router.route([{"role": "user", "content": "Test"}]))
-        assert result.model_id == "small_local"  # First step model
+        assert result.model_id == "small_local"  # low complexity stays local
         assert result.strategy == "hybrid"
+        assert result.metadata["escalated"] is False
+
+    def test_route_escalates_to_remote_on_high_complexity(self):
+        import asyncio
+
+        router = HybridRouter(local_model="small_local", remote_model="remote_top")
+        prompt = "Please analyze, compare and evaluate the following in depth. " + ("data point " * 200)
+        result = asyncio.run(router.route([{"role": "user", "content": prompt}]))
+        assert result.model_id == "remote_top"  # complex request escalates
+        assert result.metadata["escalated"] is True
 
     def test_route_contains_plan_metadata(self):
         import asyncio

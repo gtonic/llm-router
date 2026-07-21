@@ -720,17 +720,34 @@ class TestRouterStrategyRouting:
         engine.hybrid_router.route.assert_awaited_once()
         engine.policy_matcher.route.assert_not_called()
 
-    def test_latency_strategy_falls_back_to_policy_matcher(self):
-        engine = self._ready(make_router(routing_strategy=RoutingStrategy.LATENCY))
-        engine.policy_matcher.route = AsyncMock(return_value=MagicMock(model_id="lm", strategy="latency"))
-        asyncio.run(engine.generate([{"role": "user", "content": "hi"}]))
-        engine.policy_matcher.route.assert_awaited_once()
+    def test_latency_strategy_selects_lowest_latency_healthy_backend(self):
+        from llm_router.pool.base import HealthStatus
 
-    def test_cost_strategy_falls_back_to_policy_matcher(self):
-        engine = self._ready(make_router(routing_strategy=RoutingStrategy.COST))
-        engine.policy_matcher.route = AsyncMock(return_value=MagicMock(model_id="cm", strategy="cost"))
-        asyncio.run(engine.generate([{"role": "user", "content": "hi"}]))
-        engine.policy_matcher.route.assert_awaited_once()
+        engine = make_router(routing_strategy=RoutingStrategy.LATENCY)
+        engine.pool.health_check_all = AsyncMock(
+            return_value={
+                "slow": HealthStatus(healthy=True, latency_ms=200.0),
+                "fast": HealthStatus(healthy=True, latency_ms=20.0),
+                "down": HealthStatus(healthy=False, latency_ms=0.0),
+            }
+        )
+        result = asyncio.run(engine._route([{"role": "user", "content": "hi"}], [{"role": "user", "content": "hi"}]))
+        assert result.model_id == "fast"
+        assert result.strategy == "latency"
+        engine.policy_matcher.route.assert_not_called()
+
+    def test_cost_strategy_selects_cheapest_backend(self):
+        engine = make_router(routing_strategy=RoutingStrategy.COST)
+        cheap = MagicMock()
+        cheap.config = MagicMock(cost_per_1m_input=0.0, cost_per_1m_output=0.0)
+        pricey = MagicMock()
+        pricey.config = MagicMock(cost_per_1m_input=1.0, cost_per_1m_output=2.0)
+        engine.pool.list_models.return_value = ["pricey", "cheap"]
+        engine.pool.get.side_effect = {"pricey": pricey, "cheap": cheap}.get
+        result = asyncio.run(engine._route([{"role": "user", "content": "hi"}], [{"role": "user", "content": "hi"}]))
+        assert result.model_id == "cheap"
+        assert result.strategy == "cost"
+        engine.policy_matcher.route.assert_not_called()
 
 
 # ── Edge cases ──────────────────────────────────────────────────────
@@ -960,53 +977,30 @@ class TestStreamFallbackStrategies:
         engine.hybrid_router.route.assert_awaited_once()
         engine.policy_matcher.route.assert_not_called()
 
-    def test_stream_latency_strategy_calls_policy_matcher(self):
-        """LATENCY strategy falls through to policy matcher in generate_stream."""
-        engine = make_router(routing_strategy=RoutingStrategy.LATENCY)
-        engine.rate_limiter.check = AsyncMock(return_value=MagicMock(allowed=True, remaining_requests=59))
-        engine.abuse_filter.check.return_value = MagicMock(safe=True, categories=[])
-        engine.pii_filter.check.return_value = MagicMock(has_pii=False, patterns=[])
-        engine.policy_matcher.route = AsyncMock(return_value=MagicMock(model_id="latency-model", strategy="latency"))
-
-        async def _stream_gen(messages):
-            yield GenerateResult(
-                content="ok",
-                model="latency-model",
-                usage=UsageInfo(prompt_tokens=1, completion_tokens=2, total_tokens=3),
-                finish_reason="stop",
-                latency_ms=5.0,
-            )
-
-        engine.pool.get.return_value.generate_stream = _stream_gen
-
-        async def _collect():
-            chunks = []
-            async for chunk in engine.generate_stream([{"role": "user", "content": "hi"}]):
-                chunks.append(chunk)
-            return chunks
-
-        chunks = asyncio.run(_collect())
-        assert chunks[0].model == "latency-model"
-        engine.policy_matcher.route.assert_awaited_once()
-
-    def test_stream_cost_strategy_calls_policy_matcher(self):
-        """COST strategy falls through to policy matcher in generate_stream."""
+    def test_stream_cost_strategy_routes_to_cheapest_backend(self):
+        """COST strategy in generate_stream streams from the cheapest backend."""
         engine = make_router(routing_strategy=RoutingStrategy.COST)
         engine.rate_limiter.check = AsyncMock(return_value=MagicMock(allowed=True, remaining_requests=59))
         engine.abuse_filter.check.return_value = MagicMock(safe=True, categories=[])
         engine.pii_filter.check.return_value = MagicMock(has_pii=False, patterns=[])
-        engine.policy_matcher.route = AsyncMock(return_value=MagicMock(model_id="cost-model", strategy="cost"))
 
-        async def _stream_gen(messages):
+        cheap = MagicMock()
+        cheap.config = MagicMock(cost_per_1m_input=0.0, cost_per_1m_output=0.0)
+        pricey = MagicMock()
+        pricey.config = MagicMock(cost_per_1m_input=5.0, cost_per_1m_output=5.0)
+
+        async def _stream_gen(messages, **kwargs):
             yield GenerateResult(
                 content="ok",
-                model="cost-model",
+                model="cheap",
                 usage=UsageInfo(prompt_tokens=1, completion_tokens=2, total_tokens=3),
                 finish_reason="stop",
                 latency_ms=5.0,
             )
 
-        engine.pool.get.return_value.generate_stream = _stream_gen
+        cheap.generate_stream = _stream_gen
+        engine.pool.list_models.return_value = ["pricey", "cheap"]
+        engine.pool.get.side_effect = {"pricey": pricey, "cheap": cheap}.get
 
         async def _collect():
             chunks = []
@@ -1015,8 +1009,9 @@ class TestStreamFallbackStrategies:
             return chunks
 
         chunks = asyncio.run(_collect())
-        assert chunks[0].model == "cost-model"
-        engine.policy_matcher.route.assert_awaited_once()
+        assert chunks[0].content == "ok"
+        engine.policy_matcher.route.assert_not_called()
+        assert any(call.args == ("cheap",) for call in engine.pool.get.call_args_list)
 
 
 # ── Resilience: circuit breaker + no mid-stream double-emission ───────

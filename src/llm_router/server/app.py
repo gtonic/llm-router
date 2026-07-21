@@ -399,11 +399,16 @@ def create_app() -> FastAPI:
                 return JSONResponse({"detail": "Request body too large"}, status_code=413)
         return await call_next(request)
 
-    # CORS middleware
+    # CORS middleware — origins come from ROUTER_CORS_ORIGINS (default "*").
+    # "*" together with allow_credentials=True is an invalid/insecure combo
+    # (Starlette reflects the caller's Origin, so any site could make
+    # credentialed calls). Only allow credentials with an explicit allow-list.
+    cors_origins = GatewaySettings().cors_origins or ["*"]
+    allow_all_origins = "*" in cors_origins
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
+        allow_origins=cors_origins,
+        allow_credentials=not allow_all_origins,
         allow_methods=["*"],
         allow_headers=["*"],
     )

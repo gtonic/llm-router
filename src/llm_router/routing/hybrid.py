@@ -9,6 +9,10 @@ if TYPE_CHECKING:
     from llm_router.pool.base import ModelBackend
 
 from llm_router.routing.base import PolicyBase, RoutingResult
+from llm_router.routing.complexity import ComplexityDetector
+
+# Complexity levels that warrant escalating to the remote (more capable) model.
+_ESCALATION_LEVELS = {"high", "critical"}
 
 
 @dataclass
@@ -28,10 +32,16 @@ class HybridPlan:
 class HybridRouter(PolicyBase):
     """Splits complex requests into multi-step plans for different models."""
 
-    def __init__(self, local_model: str = "llama-local", remote_model: str = "gpt-5.4-nano") -> None:
+    def __init__(
+        self,
+        local_model: str = "llama-local",
+        remote_model: str = "gpt-5.4-nano",
+        complexity_detector: ComplexityDetector | None = None,
+    ) -> None:
         """Use ``local_model``/``remote_model`` (real backend IDs) for the plan's steps."""
         self.local_model = local_model
         self.remote_model = remote_model
+        self._detector = complexity_detector or ComplexityDetector()
 
     def build_plan(self) -> HybridPlan:
         """Build the multi-step plan using the configured local/remote model IDs."""
@@ -61,12 +71,17 @@ class HybridRouter(PolicyBase):
         api_key: str | None = None,
         available_models: list[ModelBackend] | None = None,
     ) -> RoutingResult:
-        """Return the first model from the hybrid plan."""
+        """Local-first, escalate to the remote model for complex requests."""
+        complexity = self._detector.analyze(messages)
+        escalate = complexity.level in _ESCALATION_LEVELS
+        model_id = self.remote_model if escalate else self.local_model
         plan = self.build_plan()
         return RoutingResult(
-            model_id=plan.steps[0].model,
+            model_id=model_id,
             strategy="hybrid",
             metadata={
+                "complexity": complexity.level,
+                "escalated": escalate,
                 "plan": [s.model + ": " + s.task for s in plan.steps],
                 "plan_description": plan.steps[0].description,
             },
