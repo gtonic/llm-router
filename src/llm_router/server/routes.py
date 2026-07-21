@@ -39,6 +39,7 @@ from llm_router.server.app import (
     record_error,
     record_request,
     record_route_decision,
+    record_ttft,
 )
 from llm_router.server.skill_manifest import (
     get_skill_index,
@@ -282,6 +283,7 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
             last_finish_reason = "stop"
             streamed_model = body.model
             streamed_usage = None
+            ttft_recorded = False
             async for chunk in router_engine.generate_stream(
                 messages=_normalize_messages(body.model_dump()["messages"]),
                 user_id=body.user_id,
@@ -293,6 +295,10 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
             ):
                 streamed_model = chunk.model or streamed_model
                 streamed_usage = chunk.usage
+                # Time to first token: first chunk that carries assistant content
+                if PROMETHEUS_ENABLED and not ttft_recorded and (chunk.content or chunk.tool_calls):
+                    record_ttft(streamed_model or "unknown", time.perf_counter() - start)
+                    ttft_recorded = True
                 delta = {"content": chunk.content, "role": "assistant"}
                 if chunk.tool_calls:
                     delta["tool_calls"] = chunk.tool_calls

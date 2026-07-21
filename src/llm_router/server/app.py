@@ -50,12 +50,22 @@ try:
         ["model", "error_type"],
     )
 
-    # Latency histogram
+    # Latency histogram — buckets extend to 120s so p95/p99 don't false-plateau
+    # at the top bucket (LLM completions, esp. local ones, can exceed 30s).
     REQUEST_DURATION = Histogram(
         "llm_router_request_duration_seconds",
         "Request latency in seconds",
         ["model", "strategy"],
-        buckets=[0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0],
+        buckets=[0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 20.0, 30.0, 45.0, 60.0, 90.0, 120.0],
+    )
+
+    # Time to first token (streaming only) — the metric that actually describes
+    # perceived latency: "model is thinking" vs "model streams slowly".
+    TIME_TO_FIRST_TOKEN = Histogram(
+        "llm_router_time_to_first_token_seconds",
+        "Streaming time to first token in seconds",
+        ["model"],
+        buckets=[0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 15.0, 30.0, 60.0],
     )
 
     # Cost tracking
@@ -172,6 +182,10 @@ try:
         """Record a successful upstream response with no assistant content."""
         EMPTY_RESPONSES.labels(model=model).inc()
 
+    def record_ttft(model: str, seconds: float):
+        """Record streaming time-to-first-token for a model."""
+        TIME_TO_FIRST_TOKEN.labels(model=model).observe(seconds)
+
     def record_backend_health(model: str, backend_type: str, healthy: bool):
         """Record the latest cached backend health state."""
         BACKEND_HEALTH.labels(model=model, type=backend_type).set(1 if healthy else 0)
@@ -208,6 +222,9 @@ except ImportError:
         pass
 
     def record_empty_response(*args, **kwargs):
+        pass
+
+    def record_ttft(*args, **kwargs):
         pass
 
     def record_backend_health(*args, **kwargs):

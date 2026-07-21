@@ -46,6 +46,30 @@ groups:
           summary: "llm-router error rate above 5%"
           description: "More than 5% of requests have errored over the last 5 minutes."
 
+      - alert: LLMRouterHighLatencyP95
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(llm_router_request_duration_seconds_bucket[5m])) by (le, model)
+          ) > 20
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High p95 latency for {{ $labels.model }}"
+          description: "p95 request latency for {{ $labels.model }} has been above 20s for 10 minutes — check backend saturation (GPU/VRAM) or upstream slowdown."
+
+      - alert: LLMRouterDailyCostBudgetExceeded
+        # Tune the threshold (USD) to your daily budget. Requires cost_per_1m_*
+        # to be configured per model so llm_router_cost_total is non-zero.
+        expr: sum(increase(llm_router_cost_total[24h])) > 25
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Daily LLM cost budget exceeded"
+          description: "Total model spend over the last 24h ({{ $value | printf \"%.2f\" }} USD) exceeded the 25 USD budget."
+
       - alert: LLMRouterRateLimitSaturation
         expr: increase(llm_router_rate_limited_total[5m]) > 20
         for: 0m
