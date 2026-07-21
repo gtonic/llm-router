@@ -220,6 +220,85 @@ class TestHealthEndpoint:
         assert resp.headers["content-type"].startswith("application/json")
 
 
+# ── Data-plane authentication tests ────────────────────────────────
+
+
+class TestDataPlaneAuth:
+    def _payload(self):
+        return {"model": "test-model", "messages": [{"role": "user", "content": "hi"}], "stream": False}
+
+    def _set_keys(self, value):
+        import llm_router.server.app as app_mod
+
+        app_mod.router_engine.settings.api_keys = value
+
+    def test_open_when_no_keys_configured(self):
+        client = make_test_client()  # api_keys="" by default → auth disabled
+        resp = client.post("/v1/chat/completions", json=self._payload())
+        assert resp.status_code == 200
+
+    def test_rejects_missing_key_when_configured(self):
+        client = make_test_client()
+        self._set_keys("secret-1")
+        try:
+            resp = client.post("/v1/chat/completions", json=self._payload())
+            assert resp.status_code == 401
+        finally:
+            self._set_keys("")
+
+    def test_rejects_invalid_key(self):
+        client = make_test_client()
+        self._set_keys("secret-1")
+        try:
+            resp = client.post("/v1/chat/completions", json=self._payload(), headers={"Authorization": "Bearer wrong"})
+            assert resp.status_code == 401
+        finally:
+            self._set_keys("")
+
+    def test_accepts_valid_bearer_key(self):
+        client = make_test_client()
+        self._set_keys("secret-1,secret-2")
+        try:
+            resp = client.post(
+                "/v1/chat/completions", json=self._payload(), headers={"Authorization": "Bearer secret-2"}
+            )
+            assert resp.status_code == 200
+        finally:
+            self._set_keys("")
+
+    def test_accepts_x_api_key_header(self):
+        client = make_test_client()
+        self._set_keys("secret-1")
+        try:
+            resp = client.post("/v1/chat/completions", json=self._payload(), headers={"X-API-Key": "secret-1"})
+            assert resp.status_code == 200
+        finally:
+            self._set_keys("")
+
+    def test_models_endpoint_gated(self):
+        client = make_test_client()
+        self._set_keys("secret-1")
+        try:
+            assert client.get("/v1/models").status_code == 401
+        finally:
+            self._set_keys("")
+
+    def test_health_endpoint_stays_open_for_docker_healthcheck(self):
+        from fastapi.testclient import TestClient
+
+        from llm_router.server.app import create_app
+
+        make_test_client()  # configures the module-level router_engine
+        self._set_keys("secret-1")
+        try:
+            # The container healthcheck hits /v1/system/health without a key. Auth
+            # must not block it (a gated route would 401 before the handler runs).
+            client = TestClient(create_app(), raise_server_exceptions=False)
+            assert client.get("/v1/system/health").status_code != 401
+        finally:
+            self._set_keys("")
+
+
 # ── Chat Completions Endpoint Tests ────────────────────────────────
 
 

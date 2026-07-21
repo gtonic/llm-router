@@ -67,6 +67,35 @@ def require_admin(x_admin_token: str | None = Header(default=None)) -> None:
         raise HTTPException(status_code=401, detail="Invalid admin token")
 
 
+def require_api_key(
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> str:
+    """Authenticate a data-plane request; return a stable, non-secret principal.
+
+    Returns ``"anonymous"`` when no keys are configured (auth disabled). When
+    ``ROUTER_API_KEYS`` is set, a valid key is required via
+    ``Authorization: Bearer <key>`` or the ``X-API-Key`` header, and a hashed
+    principal id (never the raw key) is returned for use as the tenant identity.
+    """
+    import hashlib
+    import secrets
+
+    from llm_router.server.app import router_engine
+
+    keys = router_engine.settings.data_plane_keys() if router_engine else set()
+    if not keys:
+        return "anonymous"
+    presented: str | None = None
+    if authorization and authorization.lower().startswith("bearer "):
+        presented = authorization[7:].strip()
+    elif x_api_key:
+        presented = x_api_key.strip()
+    if presented and any(secrets.compare_digest(presented, key) for key in keys):
+        return "key-" + hashlib.sha256(presented.encode()).hexdigest()[:12]
+    raise HTTPException(status_code=401, detail="Missing or invalid API key")
+
+
 router = APIRouter(prefix="/v1", tags=["llm-router"])
 admin_router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)])
 skill_router = APIRouter(tags=["agent-skills"])
@@ -189,7 +218,11 @@ def _serialize_guardrail_result(result: object) -> dict:
 
 
 @router.post("/chat/completions")
-async def chat_completions(request: Request, body: ChatCompletionRequest):
+async def chat_completions(
+    request: Request,
+    body: ChatCompletionRequest,
+    principal: str = Depends(require_api_key),
+):
     """OpenAI-compatible chat completion endpoint.
 
     Routes the request through guardrails, policy router, and model backend.
@@ -204,6 +237,12 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
     logger.info("[%s] %s %s", request_id, request.client.host, "POST /v1/chat/completions")
 
     client_ip = request.client.host if request.client else None
+    # Bind the rate-limit / audit identity to the authenticated key when auth is
+    # enabled; the body's user_id/api_key are client-controlled and spoofable.
+    if principal != "anonymous":
+        eff_user_id, eff_api_key = principal, None
+    else:
+        eff_user_id, eff_api_key = body.user_id, body.api_key
 
     # Non-streaming
     if not body.stream:
@@ -211,8 +250,8 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
             start = time.perf_counter()
             result = await router_engine.generate(
                 messages=_normalize_messages(body.model_dump()["messages"]),
-                user_id=body.user_id,
-                api_key=body.api_key,
+                user_id=eff_user_id,
+                api_key=eff_api_key,
                 model=body.model,
                 tools=body.tools,
                 max_tokens=body.max_tokens,
@@ -288,8 +327,8 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
             first_frame_recorded = False
             async for chunk in router_engine.generate_stream(
                 messages=_normalize_messages(body.model_dump()["messages"]),
-                user_id=body.user_id,
-                api_key=body.api_key,
+                user_id=eff_user_id,
+                api_key=eff_api_key,
                 model=body.model,
                 tools=body.tools,
                 max_tokens=body.max_tokens,
@@ -356,7 +395,7 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
-@router.get("/models")
+@router.get("/models", dependencies=[Depends(require_api_key)])
 async def list_models():
     """List available models (OpenAI-compatible)."""
     from llm_router.server.app import router_engine
@@ -369,7 +408,7 @@ async def list_models():
     )
 
 
-@router.get("/guardrails/pii/patterns")
+@router.get("/guardrails/pii/patterns", dependencies=[Depends(require_api_key)])
 async def get_pii_patterns():
     """Return configured PII detection patterns."""
     from llm_router.server.app import router_engine
@@ -383,7 +422,7 @@ async def get_pii_patterns():
     }
 
 
-@router.post("/guardrails/check")
+@router.post("/guardrails/check", dependencies=[Depends(require_api_key)])
 async def check_guardrails(request: Request):
     """Manually trigger a guardrail check."""
     from llm_router.server.app import router_engine
@@ -1041,8 +1080,8 @@ async def remove_pii_pattern(pattern_name: str):
 _start_time: str = ""
 
 
-@router.get("/system/manifest")
-@system_router.get("/system/manifest")
+@router.get("/system/manifest", dependencies=[Depends(require_api_key)])
+@system_router.get("/system/manifest", dependencies=[Depends(require_api_key)])
 async def get_system_manifest():
     """Return the full system self-description.
 
@@ -1144,8 +1183,8 @@ async def get_system_health():
     }
 
 
-@router.get("/system/metrics")
-@system_router.get("/system/metrics")
+@router.get("/system/metrics", dependencies=[Depends(require_api_key)])
+@system_router.get("/system/metrics", dependencies=[Depends(require_api_key)])
 async def get_system_metrics():
     """Current metrics snapshot for Prometheus-compatible consumption.
 

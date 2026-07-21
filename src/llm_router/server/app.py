@@ -294,6 +294,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     settings = GatewaySettings()
     settings.load_runtime_config()
 
+    if not settings.data_plane_keys():
+        logger.warning(
+            "Data-plane authentication is DISABLED (ROUTER_API_KEYS not set) — the "
+            "inference API accepts unauthenticated requests. Set ROUTER_API_KEYS to a "
+            "comma-separated key list to require Authorization: Bearer <key>."
+        )
+
     # Initialize OpenTelemetry
     if settings.otlp_enabled:
         setup_otel(

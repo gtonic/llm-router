@@ -256,6 +256,9 @@ class GatewaySettings(BaseSettings):
     default_model: str = "llama-local"
     fallback_model: str = "gpt-5.4-nano"
     admin_token: str = ""
+    # Comma-separated data-plane API keys (env ROUTER_API_KEYS). Empty means the
+    # inference API is UNAUTHENTICATED — a loud warning is logged at startup.
+    api_keys: str = ""
 
     # ── Model Backends ────────────────────────
     models_dir: str = "profiles"
@@ -544,6 +547,10 @@ class GatewaySettings(BaseSettings):
     @pii_max_tokens.setter
     def pii_max_tokens(self, value: int) -> None:
         self.guardrails.pii_max_tokens = value
+
+    def data_plane_keys(self) -> set[str]:
+        """Valid data-plane API keys; an empty set means auth is disabled."""
+        return {key.strip() for key in self.api_keys.split(",") if key.strip()}
 
     def model_by_id(self, model_id: str) -> ModelBackendConfig | None:
         """Look up a backend configuration by ``id``."""
