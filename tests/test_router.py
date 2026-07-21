@@ -982,6 +982,97 @@ class TestStreamFallbackStrategies:
         engine.policy_matcher.route.assert_awaited_once()
 
 
+# ── Resilience: circuit breaker + no mid-stream double-emission ───────
+
+
+class TestResilience:
+    def _base(self, engine, routed="primary"):
+        engine.rate_limiter.check = AsyncMock(return_value=MagicMock(allowed=True, remaining_requests=59))
+        engine.abuse_filter.check.return_value = MagicMock(safe=True, categories=[], abuse_score=0.0)
+        engine.pii_filter.check.return_value = MagicMock(has_pii=False, patterns=[])
+        engine.policy_matcher.route = AsyncMock(return_value=MagicMock(model_id=routed, strategy="policy"))
+        engine.settings.fallback_model = "fallback"
+
+    def test_no_fallback_on_client_error(self):
+        """A 4xx from the primary is surfaced directly — no wasted fallback call."""
+        engine = make_router()
+        self._base(engine)
+        primary = MagicMock()
+        err = RuntimeError("bad request")
+        err.status_code = 400
+        primary.generate = AsyncMock(side_effect=err)
+        fallback = MagicMock()
+        fallback.generate = AsyncMock()
+        engine.pool.get.side_effect = {"primary": primary, "fallback": fallback}.get
+
+        with pytest.raises(RuntimeError, match="bad request"):
+            asyncio.run(engine.generate([{"role": "user", "content": "hi"}]))
+        assert engine.pool.get.call_count == 1  # fallback never fetched
+        fallback.generate.assert_not_called()
+
+    def test_open_circuit_reroutes_before_calling_dead_backend(self):
+        """Once the primary's breaker is open, selection reroutes to a healthy model."""
+        engine = make_router()
+        self._base(engine)
+        breaker = engine._breaker("primary")
+        for _ in range(engine.settings.circuit_breaker_threshold):
+            breaker.record_failure()
+        assert breaker.blocked
+
+        primary = MagicMock()
+        primary.generate = AsyncMock()
+        fallback = MagicMock()
+        fallback.generate = AsyncMock(
+            return_value=GenerateResult(
+                content="ok", model="fallback", usage=UsageInfo(1, 1, 2), finish_reason="stop", latency_ms=1.0
+            )
+        )
+        engine.pool.list_models.return_value = ["primary", "fallback"]
+        engine.pool.get.side_effect = {"primary": primary, "fallback": fallback}.get
+
+        result = asyncio.run(engine.generate([{"role": "user", "content": "hi"}]))
+        assert result.model == "fallback"
+        primary.generate.assert_not_called()  # dead backend never hit
+
+    def test_no_fallback_after_partial_stream_output(self):
+        """If the primary streams content then errors, the client is NOT given a
+        second model's full answer concatenated onto the partial output."""
+        engine = make_router()
+        self._base(engine)
+        primary = MagicMock()
+        fallback = MagicMock()
+
+        async def _partial_then_error(messages, **kwargs):
+            yield GenerateResult(
+                content="partial", model="primary", usage=UsageInfo(0, 0, 0), finish_reason="incomplete", latency_ms=0
+            )
+            raise RuntimeError("connection reset")
+
+        async def _fallback_stream(messages, **kwargs):
+            yield GenerateResult(
+                content="SHOULD-NOT-APPEAR",
+                model="fallback",
+                usage=UsageInfo(0, 0, 0),
+                finish_reason="stop",
+                latency_ms=0,
+            )
+
+        primary.generate_stream = _partial_then_error
+        fallback.generate_stream = _fallback_stream
+        engine.pool.get.side_effect = {"primary": primary, "fallback": fallback}.get
+
+        chunks: list = []
+
+        async def _collect():
+            async for chunk in engine.generate_stream([{"role": "user", "content": "hi"}]):
+                chunks.append(chunk)
+
+        with pytest.raises(RuntimeError, match="connection reset"):
+            asyncio.run(_collect())
+        assert [c.content for c in chunks] == ["partial"]  # only primary's partial output
+        assert engine.pool.get.call_count == 1  # fallback stream never started
+
+
 # ── Import test ──────────────────────────────────────────────────────
 
 

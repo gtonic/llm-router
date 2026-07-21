@@ -1,0 +1,24 @@
+guardrails:
+  pii_enabled: true
+  pii_redact: true
+  pii_max_tokens: 4096
+  pii_patterns:
+  - \b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b
+  - \b\d{3}[-.]?\d{3}[-.]?\d{4}\b
+  - \b\d{4}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}\b
+  - sk-[a-zA-Z0-9]{20,}
+  abuse_block_threshold: 0.8
+  abuse_enabled: true
+  safety_enabled: true
+  safety_categories:
+  - hate
+  - harassment
+  - self-harm
+  - sexual
+  - violence
+  - political
+rate_limit:
+  enabled: true
+  rpm: 60
+  tpm: 60000
+  burst_multiplier: 1.2

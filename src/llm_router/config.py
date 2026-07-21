@@ -265,6 +265,11 @@ class GatewaySettings(BaseSettings):
     policies_dir: str = "agent-policies"
     default_policy: str = "default"
 
+    # ── Resilience ────────────────────────────
+    circuit_breaker_enabled: bool = True
+    circuit_breaker_threshold: int = 5  # consecutive failures before opening
+    circuit_breaker_cooldown: float = 30.0  # seconds a backend stays skipped
+
     # ── Guardrails ────────────────────────────
     guardrails_input: bool = True
     guardrails_output: bool = True

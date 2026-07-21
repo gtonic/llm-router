@@ -16,6 +16,7 @@ from llm_router.guardrails.pii_filter import PiiFilter
 from llm_router.guardrails.rate_limiter import RateLimiter
 from llm_router.logging_setup import AuditEntry, AuditLogger
 from llm_router.pool.base import EmptyResponseError, GenerateResult
+from llm_router.pool.circuit_breaker import CircuitBreaker
 from llm_router.pool.pool import ModelPool
 from llm_router.routing.base import RoutingResult
 from llm_router.routing.complexity import ComplexityDetector
@@ -42,6 +43,24 @@ class RateLimitExceededError(RuntimeError):
 
 class AbuseDetectedError(RuntimeError):
     """Raised when input guardrails flag a request as abusive."""
+
+
+class BackendUnavailableError(RuntimeError):
+    """Raised when a backend is skipped because its circuit breaker is open."""
+
+
+# HTTP status codes that indicate a client/request error — retrying or failing
+# over to another backend won't help, so we surface them directly.
+_NON_RETRYABLE_STATUS = {400, 401, 403, 404, 422}
+
+
+def _is_client_error(exc: Exception) -> bool:
+    """Return True for non-retryable 4xx errors (bad request, auth, not found)."""
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", None)
+    return status in _NON_RETRYABLE_STATUS
 
 
 def _retry_attempts(backend) -> int:
@@ -145,10 +164,65 @@ class RouterPolicyEngine:
         self.content_safety = content_safety
         self.default_model = default_model
         self.audit_logger = AuditLogger(self.settings.log_dir, retention_days=self.settings.audit_retention_days)
+        # Per-backend circuit breakers, created lazily on first use.
+        self._breakers: dict[str, CircuitBreaker] = {}
 
     def sync_runtime_models(self) -> None:
         """Synchronize routing policies with currently enabled backends."""
         self.round_robin.update_models(self.pool.list_models())
+
+    # ── Circuit breaking / availability ───────
+
+    def _breaker(self, model_id: str) -> CircuitBreaker:
+        """Return the circuit breaker for ``model_id``, creating it on demand."""
+        breaker = self._breakers.get(model_id)
+        if breaker is None:
+            breaker = CircuitBreaker(
+                threshold=self.settings.circuit_breaker_threshold,
+                cooldown=self.settings.circuit_breaker_cooldown,
+            )
+            self._breakers[model_id] = breaker
+        return breaker
+
+    def _is_unavailable(self, model_id: str) -> bool:
+        """True if the model's breaker is open (read-only, no probe consumed)."""
+        breaker = self._breakers.get(model_id)
+        return breaker is not None and breaker.blocked
+
+    def _prefer_available(self, model_id: str) -> str:
+        """Reroute away from a circuit-open backend at selection time.
+
+        If the routed model's breaker is open and a healthy alternative exists
+        (preferring the configured fallback), return that instead so the audit
+        log and metrics attribute the request to the backend actually used.
+        Fail-open: any uncertainty returns ``model_id`` unchanged.
+        """
+        if not self.settings.circuit_breaker_enabled or not self._is_unavailable(model_id):
+            return model_id
+        fallback = self.settings.fallback_model
+        list_models = getattr(self.pool, "list_models", None)
+        others = list(list_models()) if callable(list_models) else []
+        for candidate in [fallback, *others]:
+            if candidate and candidate != model_id and not self._is_unavailable(candidate):
+                logger.warning("Rerouting from circuit-open '%s' to '%s'", model_id, candidate)
+                return candidate
+        return model_id
+
+    async def _attempt(self, model_id: str, messages: list[dict], backend_kwargs: dict) -> GenerateResult:
+        """Call a backend through its circuit breaker, recording the outcome."""
+        breaker = self._breaker(model_id) if self.settings.circuit_breaker_enabled else None
+        if breaker is not None and not breaker.allow():
+            raise BackendUnavailableError(f"Circuit breaker open for '{model_id}'")
+        backend = self.pool.get(model_id)
+        try:
+            result = await _generate_with_retry(backend, messages, **backend_kwargs)
+        except Exception:
+            if breaker is not None:
+                breaker.record_failure()
+            raise
+        if breaker is not None:
+            breaker.record_success()
+        return result
 
     async def _route(self, messages: list[dict], routing_messages: list[dict]) -> RoutingResult:
         """Dispatch to the sub-router matching ``routing_strategy``.
@@ -305,17 +379,19 @@ class RouterPolicyEngine:
         if tools and requested_model is None:
             selected_model = self.default_model
 
-        # 5. Model call
-        backend = self.pool.get(selected_model)
+        # 5. Model call — circuit-breaker aware, with a single fallback hop
+        selected_model = self._prefer_available(selected_model)
         backend_kwargs = {"tools": tools} if tools else {}
         if max_tokens is not None:
             backend_kwargs["max_tokens"] = max_tokens
         try:
-            result = await _generate_with_retry(backend, messages, **backend_kwargs)
+            result = await self._attempt(selected_model, messages, backend_kwargs)
         except Exception as exc:
             logger.error("[%s] Model call failed: %s", request_id, exc)
             fallback_model = self.settings.fallback_model
-            if selected_model == fallback_model:
+            # Don't fail over on non-retryable client errors (4xx) — a second
+            # backend won't fix a bad request — nor when we're already on fallback.
+            if selected_model == fallback_model or _is_client_error(exc):
                 self._log_audit(
                     request_id,
                     user_id,
@@ -331,8 +407,7 @@ class RouterPolicyEngine:
                 raise
             logger.warning("[%s] Falling back from %s to %s", request_id, selected_model, fallback_model)
             try:
-                fallback = self.pool.get(fallback_model)
-                result = await _generate_with_retry(fallback, messages, **backend_kwargs)
+                result = await self._attempt(fallback_model, messages, backend_kwargs)
                 selected_model = fallback_model
             except Exception as fallback_exc:
                 self._log_audit(
@@ -462,8 +537,10 @@ class RouterPolicyEngine:
         if routing_result.policy_matched:
             span.set_attribute(SpanAttributes.ROUTING_POLICY, routing_result.policy_matched)
 
-        # 5. Model call
-        backend = self.pool.get(selected_model)
+        # 5. Model call — circuit-breaker aware. Never restart on another model
+        # once bytes have been streamed to the client (that would concatenate
+        # partial + full output into a garbled response).
+        selected_model = self._prefer_available(selected_model)
         backend_kwargs = {"tools": tools} if tools else {}
         if max_tokens is not None:
             backend_kwargs["max_tokens"] = max_tokens
@@ -486,18 +563,39 @@ class RouterPolicyEngine:
                         return
                 yield chunk
 
+        async def _run(model_id: str) -> AsyncIterator[GenerateResult]:
+            """Stream one backend through its circuit breaker, recording the outcome."""
+            breaker = self._breaker(model_id) if self.settings.circuit_breaker_enabled else None
+            if breaker is not None and not breaker.allow():
+                raise BackendUnavailableError(f"Circuit breaker open for '{model_id}'")
+            source = self.pool.get(model_id)
+            try:
+                async for chunk in _safe_stream(source):
+                    yield chunk
+            except Exception:
+                if breaker is not None:
+                    breaker.record_failure()
+                raise
+            if breaker is not None:
+                breaker.record_success()
+
+        yielded_to_client = False
         try:
             try:
-                async for chunk in _safe_stream(backend):
+                async for chunk in _run(selected_model):
+                    yielded_to_client = True
                     yield chunk
             except Exception as exc:
                 fallback_model = self.settings.fallback_model
-                if selected_model == fallback_model:
+                if yielded_to_client:
+                    logger.error("[%s] Stream failed after partial output; not falling back: %s", request_id, exc)
+                    span.set_status(otel_trace.Status(otel_trace.StatusCode.ERROR, str(exc)))
+                    raise
+                if selected_model == fallback_model or _is_client_error(exc):
                     span.set_status(otel_trace.Status(otel_trace.StatusCode.ERROR, str(exc)))
                     raise
                 logger.warning("[%s] Streaming fallback from %s to %s", request_id, selected_model, fallback_model)
-                fallback = self.pool.get(fallback_model)
-                async for chunk in _safe_stream(fallback):
+                async for chunk in _run(fallback_model):
                     yield chunk
         finally:
             span.end()
