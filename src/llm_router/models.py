@@ -11,7 +11,18 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+# ───────────────────────────────────────────
+# Request limits (DoS / cost guards)
+# ───────────────────────────────────────────
+
+# Hard ceilings applied at request-validation time so a single request can't
+# exhaust a backend or blow up cost. Tune to your deployment; a reverse proxy
+# body-size limit should back these up (see BodySizeLimitMiddleware).
+MAX_MESSAGES = 400
+MAX_OUTPUT_TOKENS = 32_768
+MAX_TOTAL_PROMPT_CHARS = 1_000_000
 
 # ───────────────────────────────────────────
 # Enums
@@ -62,12 +73,12 @@ class ChatCompletionRequest(BaseModel):
     """OpenAI-compatible chat completion request."""
 
     model: str
-    messages: list[ChatMessage]
+    messages: list[ChatMessage] = Field(..., min_length=1, max_length=MAX_MESSAGES)
     tools: list[dict] | None = None
     stream: bool = False
     temperature: float = 0.3
     top_p: float = 1.0
-    max_tokens: int | None = None
+    max_tokens: int | None = Field(default=None, ge=1, le=MAX_OUTPUT_TOKENS)
     stop: str | list[str] | None = None
     presence_penalty: float = 0.0
     frequency_penalty: float = 0.0
@@ -77,6 +88,22 @@ class ChatCompletionRequest(BaseModel):
     # Router-specific (opaque to the client)
     user_id: str | None = None
     api_key: str | None = None
+
+    @model_validator(mode="after")
+    def _check_prompt_size(self) -> ChatCompletionRequest:
+        """Reject prompts whose total text content exceeds the char ceiling."""
+        total = 0
+        for message in self.messages:
+            content = message.content
+            if isinstance(content, str):
+                total += len(content)
+            elif isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict) and isinstance(part.get("text"), str):
+                        total += len(part["text"])
+        if total > MAX_TOTAL_PROMPT_CHARS:
+            raise ValueError(f"Total prompt content exceeds {MAX_TOTAL_PROMPT_CHARS} characters")
+        return self
 
 
 # ───────────────────────────────────────────

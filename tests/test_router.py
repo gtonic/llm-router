@@ -756,7 +756,8 @@ class TestEdgeCases:
             )
         )
         asyncio.run(engine.generate([{"role": "user", "content": "hi"}], user_id=None, api_key="sk-xxx"))
-        engine.rate_limiter.check.assert_awaited_once_with(client_id="sk-xxx", tokens=100)
+        engine.rate_limiter.check.assert_awaited_once()
+        assert engine.rate_limiter.check.await_args.kwargs["client_id"] == "sk-xxx"
 
     def test_generate_uses_user_id_for_rate_limit_over_api_key(self):
         """user_id takes precedence over api_key as the rate-limit client identifier."""
@@ -775,7 +776,8 @@ class TestEdgeCases:
             )
         )
         asyncio.run(engine.generate([{"role": "user", "content": "hi"}], user_id="u1", api_key="sk-xxx"))
-        engine.rate_limiter.check.assert_awaited_once_with(client_id="u1", tokens=100)
+        engine.rate_limiter.check.assert_awaited_once()
+        assert engine.rate_limiter.check.await_args.kwargs["client_id"] == "u1"
 
     def test_generate_stream_with_explicit_model_uses_it(self):
         engine = make_router()
@@ -1033,6 +1035,16 @@ class TestResilience:
         result = asyncio.run(engine.generate([{"role": "user", "content": "hi"}]))
         assert result.model == "fallback"
         primary.generate.assert_not_called()  # dead backend never hit
+
+    def test_token_estimate_scales_with_prompt(self):
+        """The TPM estimate reflects prompt size + expected output, not a constant."""
+        from llm_router.router import _estimate_tokens
+
+        small = _estimate_tokens([{"role": "user", "content": "hi"}], None)
+        large = _estimate_tokens([{"role": "user", "content": "x" * 4000}], None)
+        assert large > small
+        # ~4 chars/token for the prompt, plus the default output allowance
+        assert large >= 4000 // 4
 
     def test_no_fallback_after_partial_stream_output(self):
         """If the primary streams content then errors, the client is NOT given a

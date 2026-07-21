@@ -88,6 +88,17 @@ async def _generate_stream_with_content(backend, messages: list[dict], **kwargs)
         raise EmptyResponseError(f"Backend '{backend.config.id}' returned an empty stream")
 
 
+def _estimate_tokens(messages: list[dict], max_tokens: int | None) -> int:
+    """Rough token estimate for TPM accounting (~4 chars/token + expected output).
+
+    A real tokenizer would be exact; this cheap heuristic is enough to stop the
+    rate limiter from treating a 50k-char prompt the same as a one-liner.
+    """
+    prompt_chars = sum(len(_message_text(message)) for message in messages)
+    output_tokens = max_tokens if isinstance(max_tokens, int) and max_tokens > 0 else 256
+    return max(1, prompt_chars // 4 + output_tokens)
+
+
 def _message_text(message: dict) -> str:
     """Extract text from OpenAI string or content-part message formats."""
     content = message.get("content", "")
@@ -333,7 +344,9 @@ class RouterPolicyEngine:
 
         # 1. Rate limit check
         rate_result = (
-            await self.rate_limiter.check(client_id=client_id, tokens=100) if self.settings.rate_limit.enabled else None
+            await self.rate_limiter.check(client_id=client_id, tokens=_estimate_tokens(messages, max_tokens))
+            if self.settings.rate_limit.enabled
+            else None
         )
         if rate_result is not None and not rate_result.allowed:
             logger.warning("[%s] Rate limited: %s", request_id, rate_result.error)
@@ -496,7 +509,9 @@ class RouterPolicyEngine:
 
         # 1. Rate limit check
         rate_result = (
-            await self.rate_limiter.check(client_id=client_id, tokens=100) if self.settings.rate_limit.enabled else None
+            await self.rate_limiter.check(client_id=client_id, tokens=_estimate_tokens(messages, max_tokens))
+            if self.settings.rate_limit.enabled
+            else None
         )
         if rate_result is not None and not rate_result.allowed:
             span.set_attribute(SpanAttributes.GUARDRAIL_RATE_LIMITED, True)

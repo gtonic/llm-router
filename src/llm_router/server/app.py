@@ -360,8 +360,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     yield
 
 
+# Reject bodies larger than this before reading them (DoS guard). Back the
+# per-field caps in models.py; a reverse proxy limit should back this up too.
+MAX_REQUEST_BYTES = 8 * 1024 * 1024  # 8 MiB
+
+
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
+    from starlette.responses import JSONResponse
+
     from llm_router.server.routes import admin_router, skill_router, system_router
     from llm_router.server.routes import router as routes_router
 
@@ -371,6 +378,19 @@ def create_app() -> FastAPI:
         version="0.1.0",
         lifespan=lifespan,
     )
+
+    @app.middleware("http")
+    async def _limit_body_size(request, call_next):
+        """Reject oversized requests up front via the Content-Length header."""
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                too_large = int(content_length) > MAX_REQUEST_BYTES
+            except ValueError:
+                too_large = False
+            if too_large:
+                return JSONResponse({"detail": "Request body too large"}, status_code=413)
+        return await call_next(request)
 
     # CORS middleware
     app.add_middleware(
