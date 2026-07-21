@@ -17,7 +17,8 @@ x-prometheus-volume: &prometheus-volume
 services:
   prometheus:
     profiles: ["monitoring"]
-    image: prom/prometheus:latest
+    # Pinned by digest for reproducible builds (was prom/prometheus:latest).
+    image: prom/prometheus@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893
     <<: *prometheus-volume
     ports:
       - "9090:9090"
@@ -35,7 +36,8 @@ services:
 
   grafana:
     profiles: ["monitoring"]
-    image: grafana/grafana:latest
+    # Pinned by digest for reproducible builds (was grafana/grafana:latest).
+    image: grafana/grafana@sha256:121a7a9ece6dc10b969f1f96eed64b4f07dfac0d0b8abc070f7cb83bbde86f63
     ports:
       - "3001:3000"
     environment:

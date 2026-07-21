@@ -6,6 +6,7 @@ Connects to a local LLM served via an OpenAI-compatible HTTP API
 
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import AsyncIterator
 
@@ -37,20 +38,32 @@ def _chat_template_kwargs(kwargs: dict) -> dict:
     return ctk
 
 
+def _expose_reasoning() -> bool:
+    """Whether to surface a model's ``reasoning_content`` as user-visible output.
+
+    Off by default: a model that emits empty ``content`` with populated
+    ``reasoning_content`` would otherwise leak its raw chain-of-thought as the
+    answer. Set ``ROUTER_EXPOSE_REASONING=true`` for models that legitimately
+    return the response only in the reasoning field.
+    """
+    return os.environ.get("ROUTER_EXPOSE_REASONING", "false").lower() == "true"
+
+
 def _response_content(response) -> str:
-    """Return assistant text from standard or reasoning-only LangChain responses."""
+    """Return assistant text from standard (or, if opted in, reasoning-only) responses."""
     content = getattr(response, "content", "")
     if isinstance(content, str) and content:
         return content
 
-    for metadata in (
-        getattr(response, "additional_kwargs", None),
-        getattr(response, "response_metadata", None),
-    ):
-        if isinstance(metadata, dict):
-            reasoning = metadata.get("reasoning_content")
-            if isinstance(reasoning, str) and reasoning:
-                return reasoning
+    if _expose_reasoning():
+        for metadata in (
+            getattr(response, "additional_kwargs", None),
+            getattr(response, "response_metadata", None),
+        ):
+            if isinstance(metadata, dict):
+                reasoning = metadata.get("reasoning_content")
+                if isinstance(reasoning, str) and reasoning:
+                    return reasoning
     return content if isinstance(content, str) else ""
 
 

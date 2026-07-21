@@ -115,7 +115,8 @@ class TestLlamaCPPBackendGenerate:
         }
 
     @pytest.mark.asyncio
-    async def test_generate_uses_reasoning_content_when_content_is_empty(self):
+    async def test_uses_reasoning_content_only_when_opted_in(self, monkeypatch):
+        monkeypatch.setenv("ROUTER_EXPOSE_REASONING", "true")
         cfg = ModelBackendConfig(
             id="llama",
             name="Llama",
@@ -132,6 +133,26 @@ class TestLlamaCPPBackendGenerate:
         result = await backend.generate([{"role": "user", "content": "Hi"}])
 
         assert result.content == "Recovered answer"
+
+    @pytest.mark.asyncio
+    async def test_reasoning_content_not_leaked_by_default(self, monkeypatch):
+        monkeypatch.delenv("ROUTER_EXPOSE_REASONING", raising=False)
+        cfg = ModelBackendConfig(
+            id="llama",
+            name="Llama",
+            type="local",
+            base_url="http://localhost:8080/v1",
+            model_name="llama",
+        )
+        backend = LlamaCPPBackend(cfg)
+        mock_response = MagicMock(content="", response_metadata={"reasoning_content": "internal chain of thought"})
+        backend._ensure_client = MagicMock()
+        backend._client = MagicMock()
+        backend._client.ainvoke = AsyncMock(return_value=mock_response)
+
+        result = await backend.generate([{"role": "user", "content": "Hi"}])
+
+        assert result.content == ""  # reasoning is not surfaced as the answer
 
 
 class TestLlamaCPPBackendStream:

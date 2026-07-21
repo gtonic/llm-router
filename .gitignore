@@ -60,6 +60,9 @@ coverage.xml
 # Ruff
 .ruff_cache/
 
+# Runtime state written by the admin API (not source of truth — see profiles/)
+config/
+
 # OS
 .DS_Store
 Thumbs.db

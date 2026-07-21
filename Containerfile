@@ -2,8 +2,12 @@
 # ================================================
 #  LLM Router & Gateway — Apple Container Image
 #  Build with: container build -t llm-router:latest .
+#
+#  Kept behaviourally in sync with ./Dockerfile — the only source of truth for
+#  the image. If you change one, change both (same stages, test gate, policies).
 # ================================================
 
+# ── 1. Build stage ─────────────────────────────────────────────────
 FROM python:3.12-slim AS builder
 
 RUN apt-get update && \
@@ -13,19 +17,24 @@ RUN apt-get update && \
 WORKDIR /build
 COPY pyproject.toml .
 
-# Install the package in a virtualenv
+# Install the package in a virtualenv so all deps are in /app/venv
 RUN python -m venv /app/venv
 ENV PATH="/app/venv/bin:$PATH"
 
 # Install dependencies first (layer caching)
+# README.md is required by hatch for editable install metadata
+COPY README.md .
 RUN pip install --no-compile --upgrade pip && \
     pip install --no-compile -e ".[dev]"
 
-# Copy source
+# Copy source and run the test gate
 COPY src/ src/
 COPY tests/ tests/
+COPY agent-policies/ agent-policies/
+ENV PYTHONPATH=/build/src
+RUN python -m pytest tests/ -q --tb=short
 
-# ── Production stage ───────────────────────────────────────────────
+# ── 2. Production stage ────────────────────────────────────────────
 FROM python:3.12-slim AS runtime
 
 # Create non-root user
@@ -41,8 +50,16 @@ ENV PATH="/app/venv/bin:$PATH"
 COPY --from=builder /build/src /app/src
 COPY --from=builder /build/pyproject.toml /app/
 
+# Source files must remain readable after dropping privileges to appuser.
+RUN chmod -R a+rX /app/src
+
+# Make llm_router importable (entry points expect it on PYTHONPATH)
+ENV PYTHONPATH=/app/src
+ENV PATH=/app:$PATH
+
 # Create directories for mounted config/profiles
 RUN mkdir -p /app/profiles /app/agent-policies /app/logs
+VOLUME ["/app/profiles", "/app/agent-policies", "/app/logs"]
 
 EXPOSE 8000
 
