@@ -68,6 +68,17 @@ try:
         buckets=[0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 15.0, 30.0, 60.0],
     )
 
+    # Time to first streamed frame — first chunk of *any* kind. The gap
+    # (first_token - first_frame) isolates pre-content generation (e.g. Qwen
+    # reasoning tokens) from raw prefill: equal values ⇒ prefill-bound, a wide
+    # gap ⇒ the backend is streaming reasoning before user-visible content.
+    TIME_TO_FIRST_FRAME = Histogram(
+        "llm_router_time_to_first_frame_seconds",
+        "Streaming time to the first emitted frame in seconds",
+        ["model"],
+        buckets=[0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 15.0, 30.0, 60.0],
+    )
+
     # Cost tracking
     COST_TOTAL = Counter(
         "llm_router_cost_total",
@@ -186,6 +197,10 @@ try:
         """Record streaming time-to-first-token for a model."""
         TIME_TO_FIRST_TOKEN.labels(model=model).observe(seconds)
 
+    def record_first_frame(model: str, seconds: float):
+        """Record streaming time-to-first-frame for a model."""
+        TIME_TO_FIRST_FRAME.labels(model=model).observe(seconds)
+
     def record_backend_health(model: str, backend_type: str, healthy: bool):
         """Record the latest cached backend health state."""
         BACKEND_HEALTH.labels(model=model, type=backend_type).set(1 if healthy else 0)
@@ -227,6 +242,9 @@ except ImportError:
     def record_ttft(*args, **kwargs):
         pass
 
+    def record_first_frame(*args, **kwargs):
+        pass
+
     def record_backend_health(*args, **kwargs):
         pass
 
@@ -237,6 +255,35 @@ except ImportError:
         from starlette.responses import PlainTextResponse
 
         return PlainTextResponse("Prometheus client not installed", status_code=501)
+
+
+async def _prewarm_local_backends(pool: ModelPool, timeout: float = 30.0) -> None:
+    """Warm each *local* backend with a 1-token generation at startup.
+
+    Kills the cold-start penalty (model load into VRAM + lazy client/connection
+    setup) so the first real request doesn't pay it. Local-only on purpose —
+    warming a remote backend would bill a real API request. Best-effort: a
+    backend that is down or slow at boot is logged and skipped, never fatal.
+    """
+    import asyncio
+
+    async def _warm(model_id: str, backend) -> None:
+        try:
+            await asyncio.wait_for(
+                backend.generate(messages=[{"role": "user", "content": "ping"}], max_tokens=1),
+                timeout=timeout,
+            )
+            logger.info("Prewarmed local backend: %s", model_id)
+        except Exception as exc:  # noqa: BLE001 - warmup is best-effort
+            logger.warning("Prewarm skipped for %s: %s", model_id, exc)
+
+    tasks = []
+    for model_id in pool.list_models():
+        backend = pool.get(model_id)
+        if getattr(backend.config, "type", None) == "local":
+            tasks.append(_warm(model_id, backend))
+    if tasks:
+        await asyncio.gather(*tasks)
 
 
 @asynccontextmanager
@@ -304,6 +351,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         content_safety=content_safety,
         default_model=settings.default_model,
     )
+
+    # Prewarm local backends so the first request skips cold-start latency.
+    # Opt out with ROUTER_PREWARM=false (e.g. tests, or slow-booting hardware).
+    if os.environ.get("ROUTER_PREWARM", "true").lower() == "true":
+        await _prewarm_local_backends(model_pool)
 
     yield
 

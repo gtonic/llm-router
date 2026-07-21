@@ -37,6 +37,7 @@ from llm_router.server.app import (
     record_backend_health,
     record_empty_response,
     record_error,
+    record_first_frame,
     record_request,
     record_route_decision,
     record_ttft,
@@ -284,6 +285,7 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
             streamed_model = body.model
             streamed_usage = None
             ttft_recorded = False
+            first_frame_recorded = False
             async for chunk in router_engine.generate_stream(
                 messages=_normalize_messages(body.model_dump()["messages"]),
                 user_id=body.user_id,
@@ -295,10 +297,17 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
             ):
                 streamed_model = chunk.model or streamed_model
                 streamed_usage = chunk.usage
-                # Time to first token: first chunk that carries assistant content
-                if PROMETHEUS_ENABLED and not ttft_recorded and (chunk.content or chunk.tool_calls):
-                    record_ttft(streamed_model or "unknown", time.perf_counter() - start)
-                    ttft_recorded = True
+                if PROMETHEUS_ENABLED:
+                    now = time.perf_counter()
+                    # First frame: first streamed chunk of any kind (prefill + connect).
+                    if not first_frame_recorded:
+                        record_first_frame(streamed_model or "unknown", now - start)
+                        first_frame_recorded = True
+                    # First token: first chunk with user-visible content. The gap
+                    # first_token - first_frame is time spent on pre-content tokens.
+                    if not ttft_recorded and (chunk.content or chunk.tool_calls):
+                        record_ttft(streamed_model or "unknown", now - start)
+                        ttft_recorded = True
                 delta = {"content": chunk.content, "role": "assistant"}
                 if chunk.tool_calls:
                     delta["tool_calls"] = chunk.tool_calls
