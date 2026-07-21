@@ -236,9 +236,9 @@ ROUTER_CIRCUIT_BREAKER_ENABLED=true
 ROUTER_CIRCUIT_BREAKER_THRESHOLD=5      # consecutive failures before a backend is skipped
 ROUTER_CIRCUIT_BREAKER_COOLDOWN=30      # seconds before a half-open probe
 
-# ── Rate limits & guardrails ───────────────────────────────
-# Defaults: 60 RPM / 60k TPM. Tune (and persist) at runtime via the admin API —
-# see PUT /admin/guardrails and /admin/rollback.
+# ── Rate limits (also runtime-tunable & persistable via /admin) ─
+ROUTER_RATE_LIMIT_RPM=120
+ROUTER_RATE_LIMIT_TPM=200000
 
 # ── CORS (explicit allow-list enables credentialed requests) ─
 ROUTER_CORS_ORIGINS=["https://app.example.com"]
@@ -344,7 +344,7 @@ curl http://localhost:8000/system/capabilities                    # allowed life
 | `tags` | `[]` | Free-form labels |
 
 **Key environment variables** (prefix `ROUTER_`, loaded from `.env`) — see [`.env.example`](.env.example) for the full list:
-`DEFAULT_STRATEGY`, `DEFAULT_MODEL`, `FALLBACK_MODEL`, `API_KEYS`, `ADMIN_TOKEN`, `CIRCUIT_BREAKER_{ENABLED,THRESHOLD,COOLDOWN}`, `CORS_ORIGINS`, `OTLP_ENABLED`, `OTELP_ENDPOINT`, `STRICT_CONFIG`, `PREWARM`. (Rate limits and guardrail toggles are runtime settings via the admin API.)
+`DEFAULT_STRATEGY`, `DEFAULT_MODEL`, `FALLBACK_MODEL`, `API_KEYS`, `ADMIN_TOKEN`, `CIRCUIT_BREAKER_{ENABLED,THRESHOLD,COOLDOWN}`, `RATE_LIMIT_{RPM,TPM}`, `CORS_ORIGINS`, `OTLP_ENABLED`, `OTELP_ENDPOINT`, `STRICT_CONFIG`, `PREWARM`.
 
 ## 🐳 Deployment
 

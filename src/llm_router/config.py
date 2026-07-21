@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
 
 logger = logging.getLogger("llm-router")
@@ -248,7 +249,7 @@ class GatewaySettings(BaseSettings):
         ROUTER_OTLP_ENABLED=true
         ROUTER_OTLP_ENDPOINT=http://localhost:4318/v1/traces
         ROUTER_RATE_LIMIT_RPM=120
-        ROUTE_RATE_LIMIT_TPM=120000
+        ROUTER_RATE_LIMIT_TPM=120000
     """
 
     # ── Core ──────────────────────────────────
@@ -280,6 +281,12 @@ class GatewaySettings(BaseSettings):
     rate_limit: RateLimitConfig = field(default_factory=RateLimitConfig)
     runtime_config_path: str = "config/runtime.yaml"
 
+    # Flat env overrides for the nested rate-limit config, so operators can use
+    # ROUTER_RATE_LIMIT_RPM / ROUTER_RATE_LIMIT_TPM (folded in below). Aliased so
+    # they read from both real env vars and the .env file.
+    rate_limit_rpm_env: int | None = Field(default=None, validation_alias="ROUTER_RATE_LIMIT_RPM")
+    rate_limit_tpm_env: int | None = Field(default=None, validation_alias="ROUTER_RATE_LIMIT_TPM")
+
     # ── Observability ─────────────────────────
     otlp_enabled: bool = True
     otlp_endpoint: str = "http://localhost:4318/v1/traces"
@@ -301,6 +308,15 @@ class GatewaySettings(BaseSettings):
         "env_file_encoding": "utf-8",
         "extra": "ignore",
     }
+
+    @model_validator(mode="after")
+    def _apply_flat_rate_limit_env(self) -> GatewaySettings:
+        """Fold ROUTER_RATE_LIMIT_RPM/TPM into the nested rate-limit config."""
+        if self.rate_limit_rpm_env is not None:
+            self.rate_limit.rpm = self.rate_limit_rpm_env
+        if self.rate_limit_tpm_env is not None:
+            self.rate_limit.tpm = self.rate_limit_tpm_env
+        return self
 
     # ───────────────────────────────────────────
     # Environment variable substitution

@@ -180,6 +180,13 @@ class TestGatewaySettings:
         gs.rate_limit_rpm = 120
         assert gs.rate_limit_rpm == 120
 
+    def test_rate_limit_env_overrides_nested_config(self):
+        with patch.dict(os.environ, {"ROUTER_RATE_LIMIT_RPM": "150", "ROUTER_RATE_LIMIT_TPM": "250000"}):
+            gs = GatewaySettings(_env_file=None)
+            assert gs.rate_limit.rpm == 150
+            assert gs.rate_limit.tpm == 250000
+            assert gs.rate_limit_rpm == 150  # backwards-compat property reflects it too
+
     def test_guardrail_compat(self):
         gs = GatewaySettings()
         assert gs.pii_redact is True
