@@ -73,6 +73,22 @@ def test_half_open_probe_failure_reopens():
     assert cb.allow() is False
 
 
+def test_record_failure_returns_true_only_on_trip():
+    cb = CircuitBreaker(threshold=2, cooldown=10.0, now=_Clock())
+    assert cb.record_failure() is False  # under threshold, stays closed
+    assert cb.record_failure() is True  # threshold reached → opens
+    assert cb.record_failure() is False  # already open → not a new trip
+
+
+def test_half_open_probe_failure_returns_true():
+    clock = _Clock()
+    cb = CircuitBreaker(threshold=1, cooldown=10.0, now=clock)
+    assert cb.record_failure() is True  # opens
+    clock.advance(10.0)
+    assert cb.allow() is True  # half-open probe
+    assert cb.record_failure() is True  # probe failed → re-opens
+
+
 def test_blocked_does_not_consume_the_probe():
     clock = _Clock()
     cb = CircuitBreaker(threshold=1, cooldown=10.0, now=clock)

@@ -67,6 +67,22 @@ def _is_client_error(exc: Exception) -> bool:
     return status in _NON_RETRYABLE_STATUS
 
 
+def _emit(recorder: str, *args) -> None:
+    """Best-effort Prometheus emission, deferred so the core has no module-load
+    dependency on the server layer (avoids a circular import)."""
+    try:
+        from llm_router.server import app as server_app
+
+        getattr(server_app, recorder)(*args)
+    except Exception:
+        logger.debug("metric %s emit failed", recorder, exc_info=True)
+
+
+def _fallback_reason(exc: Exception) -> str:
+    """Classify why a fallback happened, for the fallbacks_total 'reason' label."""
+    return "circuit_open" if isinstance(exc, BackendUnavailableError) else type(exc).__name__
+
+
 def _retry_attempts(backend) -> int:
     """Return a safe integer retry count for real and mocked backends."""
     value = getattr(backend.config, "retry_count", 1)
@@ -77,7 +93,13 @@ async def _generate_with_retry(backend, messages: list[dict], **kwargs):
     """Use retry support when supplied by a real backend implementation."""
     retry_method = getattr(backend, "generate_with_retry", None)
     if retry_method is not None and inspect.iscoroutinefunction(retry_method):
-        return await retry_method(messages, max_retries=_retry_attempts(backend), **kwargs)
+        model_id = getattr(backend.config, "id", "unknown")
+        return await retry_method(
+            messages,
+            max_retries=_retry_attempts(backend),
+            on_retry=lambda: _emit("record_retry", model_id),
+            **kwargs,
+        )
     return await backend.generate(messages, **kwargs)
 
 
@@ -239,8 +261,8 @@ class RouterPolicyEngine:
         try:
             result = await _generate_with_retry(backend, messages, **backend_kwargs)
         except Exception:
-            if breaker is not None:
-                breaker.record_failure()
+            if breaker is not None and breaker.record_failure():
+                _emit("record_circuit_open", model_id)
             raise
         if breaker is not None:
             breaker.record_success()
@@ -474,6 +496,7 @@ class RouterPolicyEngine:
                 )
                 raise
             logger.warning("[%s] Falling back from %s to %s", request_id, selected_model, fallback_model)
+            _emit("record_fallback", selected_model, fallback_model, _fallback_reason(exc))
             try:
                 result = await self._attempt(fallback_model, messages, backend_kwargs)
                 selected_model = fallback_model
@@ -649,8 +672,8 @@ class RouterPolicyEngine:
                 async for chunk in _safe_stream(source):
                     yield chunk
             except Exception:
-                if breaker is not None:
-                    breaker.record_failure()
+                if breaker is not None and breaker.record_failure():
+                    _emit("record_circuit_open", model_id)
                 raise
             if breaker is not None:
                 breaker.record_success()
@@ -680,6 +703,7 @@ class RouterPolicyEngine:
                     span.set_status(otel_trace.Status(otel_trace.StatusCode.ERROR, str(exc)))
                     raise
                 logger.warning("[%s] Streaming fallback from %s to %s", request_id, selected_model, fallback_model)
+                _emit("record_fallback", selected_model, fallback_model, _fallback_reason(exc))
                 selected_model = fallback_model
                 async for chunk in _run(fallback_model):
                     _capture(chunk)

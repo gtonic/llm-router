@@ -72,13 +72,19 @@ class CircuitBreaker:
         self._opened_at = None
         self._half_open = False
 
-    def record_failure(self) -> None:
-        """Count a failure; open (or re-open) the breaker at the threshold."""
+    def record_failure(self) -> bool:
+        """Count a failure; open (or re-open) the breaker at the threshold.
+
+        Returns ``True`` if this failure transitioned the breaker to OPEN
+        (either a threshold trip or a failed half-open probe), else ``False``.
+        """
         self._failures += 1
         if self._half_open:
             # Probe failed — re-open for a fresh cooldown.
             self._opened_at = self._now()
             self._half_open = False
-            return
-        if self._failures >= self._threshold:
+            return True
+        if self._opened_at is None and self._failures >= self._threshold:
             self._opened_at = self._now()
+            return True
+        return False

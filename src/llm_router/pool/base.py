@@ -184,9 +184,14 @@ class ModelBackend(ABC):
         self,
         messages: list[dict],
         max_retries: int = 3,
+        on_retry=None,
         **kwargs,
     ) -> GenerateResult:
-        """Call :meth:`generate` with exponential-backoff retry."""
+        """Call :meth:`generate` with exponential-backoff retry.
+
+        ``on_retry`` (if given) is called once before each backoff sleep, so the
+        caller can record retry metrics without the pool layer importing them.
+        """
         import asyncio
 
         last_error: Exception | None = None
@@ -199,6 +204,8 @@ class ModelBackend(ABC):
                 if status_code in {400, 401, 403, 404}:
                     break
                 if attempt < max_retries - 1:
+                    if on_retry is not None:
+                        on_retry()
                     await asyncio.sleep(min(0.25 * (2**attempt), 5.0))
         assert last_error is not None
         raise last_error

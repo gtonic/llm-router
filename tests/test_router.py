@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -1075,6 +1075,25 @@ class TestResilience:
         assert large > small
         # ~4 chars/token for the prompt, plus the default output allowance
         assert large >= 4000 // 4
+
+    def test_fallback_emits_fallback_metric(self):
+        engine = make_router()
+        self._base(engine)
+        primary = MagicMock()
+        primary.generate = AsyncMock(side_effect=RuntimeError("boom"))
+        fallback = MagicMock()
+        fallback.generate = AsyncMock(
+            return_value=GenerateResult(
+                content="ok", model="fallback", usage=UsageInfo(1, 1, 2), finish_reason="stop", latency_ms=1.0
+            )
+        )
+        engine.pool.get.side_effect = {"primary": primary, "fallback": fallback}.get
+
+        with patch("llm_router.router._emit") as emit:
+            result = asyncio.run(engine.generate([{"role": "user", "content": "hi"}]))
+
+        assert result.model == "fallback"
+        assert any(c.args == ("record_fallback", "primary", "fallback", "RuntimeError") for c in emit.call_args_list)
 
     def test_no_fallback_after_partial_stream_output(self):
         """If the primary streams content then errors, the client is NOT given a

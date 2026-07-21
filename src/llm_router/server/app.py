@@ -132,6 +132,26 @@ try:
         ["model"],
     )
 
+    # Routing resilience signals — the incident-time questions: how often did we
+    # fail over, retry, or trip a backend's circuit breaker?
+    FALLBACKS_TOTAL = Counter(
+        "llm_router_fallbacks_total",
+        "Requests that failed over from one backend to another",
+        ["from_model", "to_model", "reason"],
+    )
+
+    RETRIES_TOTAL = Counter(
+        "llm_router_retries_total",
+        "Backend call retry attempts",
+        ["model"],
+    )
+
+    CIRCUIT_BREAKER_TRIPS = Counter(
+        "llm_router_circuit_breaker_trips_total",
+        "Times a backend's circuit breaker opened",
+        ["model"],
+    )
+
     BACKEND_HEALTH = Gauge(
         "llm_router_backend_health",
         "Backend health status (1 healthy, 0 unhealthy)",
@@ -193,6 +213,18 @@ try:
         """Record a successful upstream response with no assistant content."""
         EMPTY_RESPONSES.labels(model=model).inc()
 
+    def record_fallback(from_model: str, to_model: str, reason: str):
+        """Record a failover from one backend to another."""
+        FALLBACKS_TOTAL.labels(from_model=from_model, to_model=to_model, reason=reason).inc()
+
+    def record_retry(model: str):
+        """Record a single backend-call retry attempt."""
+        RETRIES_TOTAL.labels(model=model).inc()
+
+    def record_circuit_open(model: str):
+        """Record a backend's circuit breaker opening."""
+        CIRCUIT_BREAKER_TRIPS.labels(model=model).inc()
+
     def record_ttft(model: str, seconds: float):
         """Record streaming time-to-first-token for a model."""
         TIME_TO_FIRST_TOKEN.labels(model=model).observe(seconds)
@@ -237,6 +269,15 @@ except ImportError:
         pass
 
     def record_empty_response(*args, **kwargs):
+        pass
+
+    def record_fallback(*args, **kwargs):
+        pass
+
+    def record_retry(*args, **kwargs):
+        pass
+
+    def record_circuit_open(*args, **kwargs):
         pass
 
     def record_ttft(*args, **kwargs):
