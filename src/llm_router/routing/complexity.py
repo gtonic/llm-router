@@ -16,7 +16,9 @@ CODE_KEYWORDS = {"def ", "function", "class ", "import ", "const ", "let ", "var
 ANALYSIS_KEYWORDS = {"analyze", "compare", "evaluate", "summarize", "explain", "why"}
 CREATIVE_KEYWORDS = {"write", "create", "design", "compose", "story", "poem", "song"}
 
-# Mapping complexity levels to model IDs (overridable via config)
+# Fallback mapping used only when no map is injected. The real deployment
+# injects a pool-validated map (see server/app.py) so targets can't drift to a
+# renamed/removed backend.
 COMPLEXITY_TO_MODEL = {
     "low": "llama-local",
     "medium": "llama-local",
@@ -33,7 +35,13 @@ class ComplexityScore:
 
 
 class ComplexityDetector:
-    """Detects request complexity from message content."""
+    """Detects request complexity from message content and maps it to a backend."""
+
+    def __init__(self, level_to_model: dict[str, str] | None = None, default_model: str = "llama-local") -> None:
+        """``level_to_model`` maps complexity levels to backend IDs (validated by
+        the caller); ``default_model`` is used for any unmapped level."""
+        self._level_to_model = dict(level_to_model) if level_to_model else dict(COMPLEXITY_TO_MODEL)
+        self._default_model = default_model
 
     def analyze(self, messages: list[dict]) -> ComplexityScore:
         """Analyze messages and return complexity score."""
@@ -102,7 +110,7 @@ class ComplexityDetector:
         available_models: list[ModelBackend] | None = None,
     ) -> RoutingResult:
         complexity = self.analyze(messages)
-        model_id = COMPLEXITY_TO_MODEL.get(complexity.level, "llama-local")
+        model_id = self._level_to_model.get(complexity.level, self._default_model)
         return RoutingResult(
             model_id=model_id,
             strategy="complexity",

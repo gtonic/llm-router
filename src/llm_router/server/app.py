@@ -393,7 +393,26 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         }
         if invalid_targets:
             raise ValueError(f"Policies reference unknown models: {sorted(invalid_targets)}")
-    complexity_detector = ComplexityDetector()
+    # Complexity → backend map derived from configured tiers (local for
+    # low/medium, remote for high/critical) and validated against the pool, so a
+    # renamed/removed backend degrades to the default instead of a hard failure.
+    available_ids = set(model_pool.list_models())
+    complexity_map = {
+        "low": settings.default_model,
+        "medium": settings.default_model,
+        "high": settings.fallback_model,
+        "critical": settings.fallback_model,
+    }
+    for level, target in list(complexity_map.items()):
+        if target not in available_ids:
+            logger.warning(
+                "Complexity target '%s' for level '%s' is not an available backend; falling back to '%s'",
+                target,
+                level,
+                settings.default_model,
+            )
+            complexity_map[level] = settings.default_model
+    complexity_detector = ComplexityDetector(level_to_model=complexity_map, default_model=settings.default_model)
     hybrid_router = HybridRouter(local_model=settings.default_model, remote_model=settings.fallback_model)
     round_robin = RoundRobinPolicy(model_pool.list_models())
 

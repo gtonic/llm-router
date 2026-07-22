@@ -102,3 +102,21 @@ class TestComplexityToModel:
         )
         result = await detector.route([{"role": "user", "content": "Hi"}])
         assert result.model_id == "llama-local"
+
+
+class TestComplexityDetectorInjectedMap:
+    async def test_uses_injected_map(self):
+        detector = ComplexityDetector(
+            level_to_model={"low": "cheap", "medium": "cheap", "high": "premium", "critical": "premium"},
+            default_model="cheap",
+        )
+        low = await detector.route([{"role": "user", "content": "Hi"}])
+        assert low.model_id == "cheap"
+        high = await detector.route([{"role": "user", "content": "analyze compare evaluate " + "word " * 600}])
+        assert high.model_id == "premium"
+
+    async def test_unmapped_level_uses_injected_default(self):
+        # No high/critical entry → complex prompts fall to the injected default.
+        detector = ComplexityDetector(level_to_model={"low": "cheap"}, default_model="fallback-x")
+        result = await detector.route([{"role": "user", "content": "analyze compare evaluate " + "word " * 600}])
+        assert result.model_id == "fallback-x"
