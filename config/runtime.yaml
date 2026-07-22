@@ -19,6 +19,6 @@ guardrails:
   - political
 rate_limit:
   enabled: true
-  rpm: 60
-  tpm: 60000
+  rpm: 6000
+  tpm: 20000000
   burst_multiplier: 1.2

@@ -402,6 +402,30 @@ class TestChatCompletions:
         # Streaming returns a StreamingResponse
         assert "text/event-stream" in resp.headers.get("content-type", "")
 
+    def test_streaming_emits_keepalive_during_slow_backend(self):
+        import asyncio
+
+        import llm_router.server.app as app_mod
+        import llm_router.server.routes as routes_mod
+        from llm_router.pool.base import GenerateResult, UsageInfo
+
+        client = make_test_client()
+
+        async def _slow_stream(*args, **kwargs):
+            await asyncio.sleep(0.05)  # silent longer than the (patched) heartbeat
+            yield GenerateResult(
+                content="hi", model="test-model", usage=UsageInfo(0, 0, 0), finish_reason="stop", latency_ms=0
+            )
+
+        app_mod.router_engine.pool.get.return_value.generate_stream = _slow_stream
+        with patch.object(routes_mod, "_SSE_HEARTBEAT_SECONDS", 0.01):
+            resp = self._post_chat(client, stream=True)
+            body = resp.text
+
+        assert ": keep-alive" in body  # heartbeat kept the connection warm during the slow prefill
+        assert "hi" in body  # content still streamed
+        assert "[DONE]" in body
+
     def test_streaming_records_request_metrics(self):
         client = make_test_client()
 

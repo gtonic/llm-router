@@ -5,6 +5,8 @@ Implements OpenAI-compatible endpoints plus gateway-specific routes.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import time
 import uuid
@@ -52,6 +54,11 @@ from llm_router.server.system_manifest import (
 )
 
 logger = logging.getLogger("llm-router")
+
+# Emit an SSE keep-alive comment if no chunk has arrived for this long, so a
+# client doesn't read-timeout during a slow backend prefill (large contexts on a
+# local model can be silent for a minute or more before the first token).
+_SSE_HEARTBEAT_SECONDS = 15.0
 
 
 def require_admin(x_admin_token: str | None = Header(default=None)) -> None:
@@ -327,50 +334,80 @@ async def chat_completions(
             streamed_usage = None
             ttft_recorded = False
             first_frame_recorded = False
-            async for chunk in router_engine.generate_stream(
-                messages=_normalize_messages(body.model_dump()["messages"]),
-                user_id=eff_user_id,
-                api_key=eff_api_key,
-                model=body.model,
-                tools=body.tools,
-                max_tokens=body.max_tokens,
-                client_ip=client_ip,
-                session_id=x_session_id,
-            ):
-                streamed_model = chunk.model or streamed_model
-                # Keep the real token usage from the terminal accounting chunk
-                # (content chunks carry zeros); don't let it be overwritten back.
-                if chunk.usage and chunk.usage.total_tokens:
-                    streamed_usage = chunk.usage
-                # The terminal accounting chunk has no content/tool_calls — capture
-                # its usage above but don't emit an empty delta to the client.
-                if not chunk.content and not chunk.tool_calls:
-                    continue
-                if PROMETHEUS_ENABLED:
-                    now = time.perf_counter()
-                    # First frame: first streamed chunk of any kind (prefill + connect).
-                    if not first_frame_recorded:
-                        record_first_frame(streamed_model or "unknown", now - start)
-                        first_frame_recorded = True
-                    # First token: first chunk with user-visible content. The gap
-                    # first_token - first_frame is time spent on pre-content tokens.
-                    if not ttft_recorded and (chunk.content or chunk.tool_calls):
-                        record_ttft(streamed_model or "unknown", now - start)
-                        ttft_recorded = True
-                delta = {"content": chunk.content, "role": "assistant"}
-                if chunk.tool_calls:
-                    delta["tool_calls"] = chunk.tool_calls
-                    last_finish_reason = "tool_calls"
-                chunk_data = ChatCompletionChunk(
-                    model=chunk.model,
-                    choices=[
-                        ChunkChoice(
-                            delta=delta,
-                            finish_reason="tool_calls" if chunk.finish_reason == "tool_calls" else None,
-                        )
-                    ],
-                )
-                yield f"data: {chunk_data.model_dump_json()}\n\n"
+            # Consume the router stream via a queue so we can interleave SSE
+            # keep-alive comments while the backend is still prefilling (no chunk
+            # yet) — otherwise a slow local prefill looks like a dead connection.
+            queue: asyncio.Queue = asyncio.Queue()
+
+            async def _pump() -> None:
+                try:
+                    async for chunk in router_engine.generate_stream(
+                        messages=_normalize_messages(body.model_dump()["messages"]),
+                        user_id=eff_user_id,
+                        api_key=eff_api_key,
+                        model=body.model,
+                        tools=body.tools,
+                        max_tokens=body.max_tokens,
+                        client_ip=client_ip,
+                        session_id=x_session_id,
+                    ):
+                        await queue.put(("chunk", chunk))
+                except Exception as exc:  # noqa: BLE001 - surfaced to the consumer below
+                    await queue.put(("error", exc))
+                else:
+                    await queue.put(("done", None))
+
+            pump = asyncio.create_task(_pump())
+            try:
+                while True:
+                    try:
+                        kind, payload = await asyncio.wait_for(queue.get(), timeout=_SSE_HEARTBEAT_SECONDS)
+                    except TimeoutError:
+                        yield ": keep-alive\n\n"  # SSE comment — keeps the connection warm
+                        continue
+                    if kind == "error":
+                        raise payload
+                    if kind == "done":
+                        break
+                    chunk = payload
+                    streamed_model = chunk.model or streamed_model
+                    # Keep the real token usage from the terminal accounting chunk
+                    # (content chunks carry zeros); don't let it be overwritten back.
+                    if chunk.usage and chunk.usage.total_tokens:
+                        streamed_usage = chunk.usage
+                    # The terminal accounting chunk has no content/tool_calls — capture
+                    # its usage above but don't emit an empty delta to the client.
+                    if not chunk.content and not chunk.tool_calls:
+                        continue
+                    if PROMETHEUS_ENABLED:
+                        now = time.perf_counter()
+                        # First frame: first streamed chunk of any kind (prefill + connect).
+                        if not first_frame_recorded:
+                            record_first_frame(streamed_model or "unknown", now - start)
+                            first_frame_recorded = True
+                        # First token: first chunk with user-visible content. The gap
+                        # first_token - first_frame is time spent on pre-content tokens.
+                        if not ttft_recorded and (chunk.content or chunk.tool_calls):
+                            record_ttft(streamed_model or "unknown", now - start)
+                            ttft_recorded = True
+                    delta = {"content": chunk.content, "role": "assistant"}
+                    if chunk.tool_calls:
+                        delta["tool_calls"] = chunk.tool_calls
+                        last_finish_reason = "tool_calls"
+                    chunk_data = ChatCompletionChunk(
+                        model=chunk.model,
+                        choices=[
+                            ChunkChoice(
+                                delta=delta,
+                                finish_reason="tool_calls" if chunk.finish_reason == "tool_calls" else None,
+                            )
+                        ],
+                    )
+                    yield f"data: {chunk_data.model_dump_json()}\n\n"
+            finally:
+                pump.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await pump
             if PROMETHEUS_ENABLED:
                 usage = streamed_usage or ModelsUsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0)
                 record_request(
