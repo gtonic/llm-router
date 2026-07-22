@@ -272,7 +272,7 @@ Every decision is guarded by the **circuit breaker** and a single-hop **fallback
 - **PII detection & redaction** — emails, phone numbers, card numbers, API keys, plus custom regex patterns; redaction is applied to what's sent upstream *and* what's returned.
 - **Abuse & content-safety filtering** — configurable categories; output is scanned as it streams (bounded, O(n)).
 - **Rate limiting** — per-principal RPM/TPM (token-bucket), keyed to the authenticated API key, not spoofable body fields.
-- **Request caps** — message-count, `max_tokens` and body-size limits reject oversized / DoS requests up front.
+- **Request caps** — message-count, `max_tokens` (default ≤128k) and body-size limits reject oversized / DoS requests up front, all env-tunable (`ROUTER_MAX_OUTPUT_TOKENS`, …).
 - **Two auth planes** — data-plane API keys for `/v1/*`, a separate admin token for the mutation API (both constant-time compared).
 
 ## 📈 Observability that actually tells you what's wrong

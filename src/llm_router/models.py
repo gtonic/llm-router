@@ -6,6 +6,7 @@ client can talk to the router without changes.
 
 from __future__ import annotations
 
+import os
 import uuid
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -17,12 +18,22 @@ from pydantic import BaseModel, Field, model_validator
 # Request limits (DoS / cost guards)
 # ───────────────────────────────────────────
 
-# Hard ceilings applied at request-validation time so a single request can't
-# exhaust a backend or blow up cost. Tune to your deployment; a reverse proxy
-# body-size limit should back these up (see BodySizeLimitMiddleware).
-MAX_MESSAGES = 400
-MAX_OUTPUT_TOKENS = 32_768
-MAX_TOTAL_PROMPT_CHARS = 1_000_000
+
+def _int_env(name: str, default: int) -> int:
+    """Read a positive integer limit from the environment, else the default."""
+    try:
+        value = int(os.environ.get(name, ""))
+        return value if value > 0 else default
+    except ValueError:
+        return default
+
+
+# Generous-but-bounded ceilings applied at request-validation time so a single
+# request can't exhaust a backend or blow up cost. Env-overridable; a reverse
+# proxy body-size limit should back these up (see BodySizeLimitMiddleware).
+MAX_MESSAGES = _int_env("ROUTER_MAX_MESSAGES", 1000)
+MAX_OUTPUT_TOKENS = _int_env("ROUTER_MAX_OUTPUT_TOKENS", 131_072)
+MAX_TOTAL_PROMPT_CHARS = _int_env("ROUTER_MAX_TOTAL_PROMPT_CHARS", 4_000_000)
 
 # ───────────────────────────────────────────
 # Enums
