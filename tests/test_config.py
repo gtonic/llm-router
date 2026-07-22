@@ -187,6 +187,24 @@ class TestGatewaySettings:
             assert gs.rate_limit.tpm == 250000
             assert gs.rate_limit_rpm == 150  # backwards-compat property reflects it too
 
+    def test_env_rate_limit_wins_over_persisted_runtime_config(self, tmp_path):
+        rc = tmp_path / "runtime.yaml"
+        rc.write_text("rate_limit:\n  tpm: 60000\n  rpm: 60\n")
+        with patch.dict(os.environ, {"ROUTER_RATE_LIMIT_TPM": "2000000"}):
+            gs = GatewaySettings(_env_file=None)
+            gs.load_runtime_config(rc)
+            assert gs.rate_limit.tpm == 2000000  # explicit env wins over stale runtime state
+            assert gs.rate_limit.rpm == 60  # no env for rpm → persisted value applies
+
+    def test_runtime_config_applies_when_no_env_override(self, tmp_path):
+        rc = tmp_path / "runtime.yaml"
+        rc.write_text("rate_limit:\n  tpm: 99999\n")
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("ROUTER_RATE_LIMIT_TPM", None)
+            gs = GatewaySettings(_env_file=None)
+            gs.load_runtime_config(rc)
+            assert gs.rate_limit.tpm == 99999  # no env → runtime config applies
+
     def test_guardrail_compat(self):
         gs = GatewaySettings()
         assert gs.pii_redact is True

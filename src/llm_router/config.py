@@ -482,6 +482,10 @@ class GatewaySettings(BaseSettings):
             if hasattr(self.guardrails, key):
                 setattr(self.guardrails, key, value)
         for key, value in payload.get("rate_limit", {}).items():
+            # Explicit env config (e.g. ROUTER_RATE_LIMIT_TPM) is authoritative and
+            # must not be silently overridden by a stale persisted runtime snapshot.
+            if f"ROUTER_RATE_LIMIT_{key.upper()}" in os.environ:
+                continue
             if hasattr(self.rate_limit, key):
                 setattr(self.rate_limit, key, value)
 
