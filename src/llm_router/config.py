@@ -129,6 +129,8 @@ class ModelBackendConfig:
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
             "timeout": self.timeout,
+            "read_timeout": self.read_timeout,
+            "connect_timeout": self.connect_timeout,
             "retry_count": self.retry_count,
             "cost_per_1m_input": self.cost_per_1m_input,
             "cost_per_1m_output": self.cost_per_1m_output,
