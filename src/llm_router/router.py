@@ -152,6 +152,26 @@ def _message_text(message: dict) -> str:
     return ""
 
 
+def _bounded_guardrail_text(messages: list[dict], max_tokens: int) -> str:
+    """Concatenate the most-recent message text up to ~``max_tokens`` (4 chars/token).
+
+    Guardrail (PII/abuse) scanning is O(text length) and runs synchronously in the
+    async request handler; scanning a full 74k-token context is ~70 ms of CPU that
+    blocks the event loop. Bounding to the recent tail keeps it cheap — older turns
+    were already scanned on their own request, and the current turn is at the end.
+    """
+    budget = max(1, max_tokens) * 4
+    parts: list[str] = []
+    total = 0
+    for message in reversed(messages):
+        text = _message_text(message)
+        parts.append(text)
+        total += len(text) + 1
+        if total >= budget:
+            break
+    return " ".join(reversed(parts))[-budget:]
+
+
 def _redact_messages(messages: list[dict], pii_filter: PiiFilter) -> list[dict]:
     """Redact PII in string and OpenAI content-part messages before inference."""
     redacted = []
@@ -494,15 +514,22 @@ class RouterPolicyEngine:
             raise RateLimitExceededError(f"Rate limited: {rate_result.error}")
 
         # 2. Input PII filter
-        full_text = " ".join(_message_text(msg) for msg in messages)
+        pii_enabled = self.settings.guardrails.pii_enabled
+        abuse_enabled = self.settings.guardrails.abuse_enabled
         routing_messages = messages
-        pii_result = self.pii_filter.check(full_text, mode="input") if self.settings.guardrails.pii_enabled else None
+        # Scan only a bounded recent window (skip entirely when both are off).
+        full_text = (
+            _bounded_guardrail_text(messages, self.settings.guardrails.pii_max_tokens)
+            if (pii_enabled or abuse_enabled)
+            else ""
+        )
+        pii_result = self.pii_filter.check(full_text, mode="input") if pii_enabled else None
         if pii_result is not None and pii_result.has_pii:
             logger.info("[%s] PII detected: %s", request_id, pii_result.patterns)
             messages = _redact_messages(messages, self.pii_filter)
 
         # 3. Input abuse filter
-        abuse_result = self.abuse_filter.check(full_text) if self.settings.guardrails.abuse_enabled else None
+        abuse_result = self.abuse_filter.check(full_text) if abuse_enabled else None
         if abuse_result is not None and not abuse_result.safe:
             logger.warning(
                 "[%s] Abuse detected (score=%.2f): %s",
@@ -679,14 +706,21 @@ class RouterPolicyEngine:
             raise RateLimitExceededError(f"Rate limited: {rate_result.error}")
 
         # 2. Input PII filter
-        full_text = " ".join(_message_text(msg) for msg in messages)
+        pii_enabled = self.settings.guardrails.pii_enabled
+        abuse_enabled = self.settings.guardrails.abuse_enabled
         routing_messages = messages
-        pii_result = self.pii_filter.check(full_text, mode="input") if self.settings.guardrails.pii_enabled else None
+        # Scan only a bounded recent window (skip entirely when both are off).
+        full_text = (
+            _bounded_guardrail_text(messages, self.settings.guardrails.pii_max_tokens)
+            if (pii_enabled or abuse_enabled)
+            else ""
+        )
+        pii_result = self.pii_filter.check(full_text, mode="input") if pii_enabled else None
         if pii_result is not None and pii_result.has_pii:
             messages = _redact_messages(messages, self.pii_filter)
 
         # 3. Input abuse filter
-        abuse_result = self.abuse_filter.check(full_text) if self.settings.guardrails.abuse_enabled else None
+        abuse_result = self.abuse_filter.check(full_text) if abuse_enabled else None
         if abuse_result is not None and not abuse_result.safe:
             span.set_attribute(SpanAttributes.GUARDRAIL_ABUSE_SAFE, False)
             self._log_audit(

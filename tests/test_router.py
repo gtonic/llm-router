@@ -1177,6 +1177,28 @@ class TestResilience:
         engine.policy_matcher.route.assert_awaited_once()  # strategy re-consulted
         assert any(c.args == ("model-b",) for c in engine.pool.get.call_args_list)
 
+    def test_bounded_guardrail_text_takes_recent_tail(self):
+        from llm_router.router import _bounded_guardrail_text
+
+        msgs = [{"role": "user", "content": "x" * 1000}, {"role": "user", "content": "recent"}]
+        r = _bounded_guardrail_text(msgs, max_tokens=2)  # budget = 8 chars
+        assert "recent" in r  # the current turn (tail) is scanned
+        assert len(r) <= 8  # bounded, not the whole 1000+ chars
+
+    def test_guardrails_skipped_when_disabled(self):
+        engine = make_router()
+        self._base(engine)
+        engine.settings.guardrails.pii_enabled = False
+        engine.settings.guardrails.abuse_enabled = False
+        engine.pool.get.return_value.generate = AsyncMock(
+            return_value=GenerateResult(
+                content="ok", model="model-a", usage=UsageInfo(1, 1, 2), finish_reason="stop", latency_ms=1.0
+            )
+        )
+        asyncio.run(engine.generate([{"role": "user", "content": "hi"}]))
+        engine.pii_filter.check.assert_not_called()
+        engine.abuse_filter.check.assert_not_called()
+
     def test_affinity_not_pinned_on_tools_turn(self):
         engine = self._sticky_engine()  # affinity enabled, session-capable
         asyncio.run(
