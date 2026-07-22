@@ -243,6 +243,15 @@ class RouterPolicyEngine:
             ttl=self.settings.session_affinity_ttl,
             max_entries=self.settings.session_affinity_max_entries,
         )
+        # EWMA of observed request latency per backend, for the 'latency' strategy.
+        self._latency_ewma: dict[str, float] = {}
+
+    def _observe_latency(self, model_id: str, latency_ms: float) -> None:
+        """Fold an observed request latency into the per-backend EWMA."""
+        if not latency_ms or latency_ms <= 0:
+            return
+        prev = self._latency_ewma.get(model_id)
+        self._latency_ewma[model_id] = latency_ms if prev is None else 0.3 * latency_ms + 0.7 * prev
 
     # ── Session affinity ──────────────────────
 
@@ -392,19 +401,28 @@ class RouterPolicyEngine:
         )
 
     async def _route_latency(self) -> RoutingResult:
-        """Route to the healthy backend with the lowest recent health-check latency."""
-        fastest, best = None, None
+        """Route to the fastest healthy backend, preferring observed request latency
+        (EWMA) over the health-check ping — a 2-min-prefill backend pings fast but
+        generates slowly, so the ping alone would pick the worst one."""
         try:
             health = await self.pool.health_check_all()
         except Exception:
             health = {}
-        for model_id, status in (health or {}).items():
-            if not getattr(status, "healthy", False):
-                continue
-            latency = getattr(status, "latency_ms", None)
-            if latency is not None and (best is None or latency < best):
-                best, fastest = latency, model_id
-        return RoutingResult(model_id=fastest or self.default_model, strategy="latency", metadata={"latency_ms": best})
+        healthy = [mid for mid, status in (health or {}).items() if getattr(status, "healthy", False)]
+        if not healthy:
+            return RoutingResult(model_id=self.default_model, strategy="latency", metadata={})
+
+        def _score(model_id: str) -> float:
+            observed = self._latency_ewma.get(model_id)
+            if observed is not None:
+                return observed
+            ping = getattr(health[model_id], "latency_ms", None)
+            return ping if ping is not None else float("inf")
+
+        fastest = min(healthy, key=_score)
+        return RoutingResult(
+            model_id=fastest, strategy="latency", metadata={"latency_ms": self._latency_ewma.get(fastest)}
+        )
 
     def _log_audit(
         self,
@@ -654,7 +672,8 @@ class RouterPolicyEngine:
             result.latency_ms,
         )
 
-        # 8. Pin the session to the backend that served it (eligible turns only), and audit.
+        # 8. Record latency, pin the session (eligible turns only), and audit.
+        self._observe_latency(selected_model, result.latency_ms)
         if affinity == "store":
             _emit("record_affinity", "store")
         if affinity_eligible:
@@ -688,6 +707,7 @@ class RouterPolicyEngine:
         """Run a streaming completion with full guardrails and tracing."""
         request_id = f"{user_id or 'anonymous'}:{int(time.time())}"
         client_id = user_id or api_key or client_ip or "anonymous"
+        stream_start = time.perf_counter()
 
         span = get_tracer("llm-router").start_span("gateway.chat_completion_stream")
         span.set_attribute(SpanAttributes.GATEWAY_REQUEST_ID, request_id)
@@ -884,7 +904,8 @@ class RouterPolicyEngine:
                     span=span,
                 )
             else:
-                # Success — pin the session (eligible turns only) + audit with usage.
+                # Success — record latency, pin the session (eligible turns only) + audit.
+                self._observe_latency(selected_model, (time.perf_counter() - stream_start) * 1000)
                 if affinity == "store":
                     _emit("record_affinity", "store")
                 if affinity_eligible:

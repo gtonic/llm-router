@@ -1177,6 +1177,20 @@ class TestResilience:
         engine.policy_matcher.route.assert_awaited_once()  # strategy re-consulted
         assert any(c.args == ("model-b",) for c in engine.pool.get.call_args_list)
 
+    def test_latency_strategy_prefers_observed_latency_over_ping(self):
+        from llm_router.pool.base import HealthStatus
+
+        engine = make_router(routing_strategy=RoutingStrategy.LATENCY)
+        engine.pool.health_check_all = AsyncMock(
+            return_value={
+                "a": HealthStatus(healthy=True, latency_ms=5.0),  # pings fast…
+                "b": HealthStatus(healthy=True, latency_ms=50.0),  # …pings slow
+            }
+        )
+        engine._latency_ewma = {"a": 120000.0, "b": 800.0}  # but a is actually slow to generate
+        result = asyncio.run(engine._route([{"role": "user", "content": "hi"}], [{"role": "user", "content": "hi"}]))
+        assert result.model_id == "b"  # observed request latency wins over the health ping
+
     def test_bounded_guardrail_text_takes_recent_tail(self):
         from llm_router.router import _bounded_guardrail_text
 

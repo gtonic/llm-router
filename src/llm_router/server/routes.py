@@ -35,6 +35,8 @@ from llm_router.pool.pool import ModelPool
 from llm_router.router import AbuseDetectedError, RateLimitExceededError
 from llm_router.server.app import (
     PROMETHEUS_ENABLED,
+    record_active_end,
+    record_active_start,
     record_admin_action,
     record_backend_health,
     record_empty_response,
@@ -254,6 +256,8 @@ async def chat_completions(
 
     # Non-streaming
     if not body.stream:
+        if PROMETHEUS_ENABLED:
+            record_active_start()
         try:
             start = time.perf_counter()
             result = await router_engine.generate(
@@ -324,6 +328,9 @@ async def chat_completions(
                 if type(exc).__name__ == "EmptyResponseError":
                     record_empty_response(body.model or "unknown")
             raise HTTPException(status_code=500, detail=str(exc)) from exc
+        finally:
+            if PROMETHEUS_ENABLED:
+                record_active_end()
 
     # Streaming
     async def event_generator() -> AsyncGenerator[str, None]:
@@ -451,7 +458,12 @@ async def chat_completions(
             )
             yield f"data: {error_chunk.model_dump_json()}\n\n"
             yield "data: [DONE]\n\n"
+        finally:
+            if PROMETHEUS_ENABLED:
+                record_active_end()
 
+    if PROMETHEUS_ENABLED:
+        record_active_start()
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 

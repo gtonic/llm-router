@@ -235,6 +235,14 @@ try:
         """Record a session-affinity decision ('hit' or 'store')."""
         SESSION_AFFINITY.labels(result=result).inc()
 
+    def record_active_start():
+        """Mark a request as in-flight (concurrency gauge)."""
+        ACTIVE_REQUESTS.inc()
+
+    def record_active_end():
+        """Mark an in-flight request as finished."""
+        ACTIVE_REQUESTS.dec()
+
     def record_ttft(model: str, seconds: float):
         """Record streaming time-to-first-token for a model."""
         TIME_TO_FIRST_TOKEN.labels(model=model).observe(seconds)
@@ -291,6 +299,12 @@ except ImportError:
         pass
 
     def record_affinity(*args, **kwargs):
+        pass
+
+    def record_active_start(*args, **kwargs):
+        pass
+
+    def record_active_end(*args, **kwargs):
         pass
 
     def record_ttft(*args, **kwargs):
