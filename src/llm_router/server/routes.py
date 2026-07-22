@@ -390,7 +390,7 @@ async def chat_completions(
             yield f"data: {final_chunk.model_dump_json()}\n\n"
             yield "data: [DONE]\n\n"
         except Exception as exc:
-            logger.error("[%s] Stream error: %s", request_id, exc)
+            logger.error("[%s] Stream error: %s: %s", request_id, type(exc).__name__, exc, exc_info=True)
             if PROMETHEUS_ENABLED:
                 record_error(model=body.model or "unknown", error_type=type(exc).__name__)
                 if type(exc).__name__ == "EmptyResponseError":
