@@ -523,10 +523,13 @@ class RouterPolicyEngine:
             )
             raise AbuseDetectedError(f"Abuse detected: {abuse_result.categories}")
 
-        # 4. Routing decision — session affinity first, else the strategy
+        # 4. Routing decision — session affinity first, else the strategy.
+        # Affinity applies only to auto-routed, tool-less turns; a tools/explicit
+        # turn must NOT pin the session (that would hijack later auto turns).
         requested_model = self._resolve_model(model)
         session_key = self._session_key(session_id, user_id)
-        sticky_model = self._affinity_model(session_key) if requested_model is None and not tools else None
+        affinity_eligible = session_key is not None and requested_model is None and not tools
+        sticky_model = self._affinity_model(session_key) if affinity_eligible else None
         if sticky_model is not None:
             routing_result = RoutingResult(
                 model_id=sticky_model, strategy=self.routing_strategy.value, metadata={"affinity": "hit"}
@@ -535,7 +538,7 @@ class RouterPolicyEngine:
             _emit("record_affinity", "hit")
         else:
             routing_result = await self._route(messages, routing_messages)
-            affinity = "store" if session_key is not None else None
+            affinity = "store" if affinity_eligible else None
 
         selected_model = requested_model or routing_result.model_id or self.default_model
         if tools and requested_model is None:
@@ -624,10 +627,11 @@ class RouterPolicyEngine:
             result.latency_ms,
         )
 
-        # 8. Pin the session to the backend that served it, and audit.
+        # 8. Pin the session to the backend that served it (eligible turns only), and audit.
         if affinity == "store":
             _emit("record_affinity", "store")
-        self._affinity_remember(session_key, selected_model)
+        if affinity_eligible:
+            self._affinity_remember(session_key, selected_model)
         self._log_audit(
             request_id,
             user_id,
@@ -697,10 +701,12 @@ class RouterPolicyEngine:
             )
             raise AbuseDetectedError(f"Abuse detected: {abuse_result.categories}")
 
-        # 4. Routing decision — session affinity first, else the strategy
+        # 4. Routing decision — session affinity first, else the strategy.
+        # Affinity applies only to auto-routed, tool-less turns (see generate()).
         requested_model = self._resolve_model(model)
         session_key = self._session_key(session_id, user_id)
-        sticky_model = self._affinity_model(session_key) if requested_model is None and not tools else None
+        affinity_eligible = session_key is not None and requested_model is None and not tools
+        sticky_model = self._affinity_model(session_key) if affinity_eligible else None
         if sticky_model is not None:
             routing_result = RoutingResult(
                 model_id=sticky_model, strategy=self.routing_strategy.value, metadata={"affinity": "hit"}
@@ -709,7 +715,7 @@ class RouterPolicyEngine:
             _emit("record_affinity", "hit")
         else:
             routing_result = await self._route(messages, routing_messages)
-            affinity = "store" if session_key is not None else None
+            affinity = "store" if affinity_eligible else None
 
         selected_model = requested_model or routing_result.model_id or self.default_model
         if tools and requested_model is None:
@@ -727,15 +733,15 @@ class RouterPolicyEngine:
             backend_kwargs["max_tokens"] = max_tokens
 
         safety_enabled = self.settings.guardrails.safety_enabled
+        safety_blocked = False
 
         async def _safe_stream(source_backend) -> AsyncIterator[GenerateResult]:
-            """Stream chunks, stopping (without a fallback retry) if output is blocked.
-
-            Content safety scans a bounded sliding window (not the whole growing
-            buffer every chunk), keeping this O(n) instead of O(n^2) on long
-            responses. The window overlaps chunk boundaries so keywords split
-            across chunks are still caught.
+            """Stream chunks, stopping (and flagging a content-safety block) rather
+            than falling back. Content safety scans a bounded sliding window (not
+            the whole growing buffer every chunk), keeping this O(n) not O(n^2);
+            the window overlaps chunk boundaries so split keywords are still caught.
             """
+            nonlocal safety_blocked
             window = ""
             async for chunk in _generate_stream_with_content(source_backend, messages, **backend_kwargs):
                 if safety_enabled and chunk.content:
@@ -747,6 +753,7 @@ class RouterPolicyEngine:
                             request_id,
                             safety_result.categories,
                         )
+                        safety_blocked = True
                         return
                 yield chunk
 
@@ -775,6 +782,22 @@ class RouterPolicyEngine:
             if chunk.usage and chunk.usage.total_tokens:
                 final_usage = chunk.usage
 
+        def _audit_error(model_id: str, exc: Exception) -> None:
+            """Write an error audit entry (parity with the non-streaming path)."""
+            self._log_audit(
+                request_id,
+                user_id,
+                model_id,
+                "error",
+                routing_result=routing_result,
+                pii_result=pii_result,
+                abuse_result=abuse_result,
+                error=str(exc),
+                session_key=session_key,
+                affinity=affinity,
+                span=span,
+            )
+
         try:
             try:
                 async for chunk in _run(selected_model):
@@ -785,35 +808,66 @@ class RouterPolicyEngine:
                 fallback_model = self.settings.fallback_model
                 if yielded_to_client:
                     logger.error("[%s] Stream failed after partial output; not falling back: %s", request_id, exc)
-                    span.set_status(otel_trace.Status(otel_trace.StatusCode.ERROR, str(exc)))
+                    _audit_error(selected_model, exc)
+                    span_ended = True
                     raise
                 if selected_model == fallback_model or _is_client_error(exc):
-                    span.set_status(otel_trace.Status(otel_trace.StatusCode.ERROR, str(exc)))
+                    _audit_error(selected_model, exc)
+                    span_ended = True
                     raise
                 logger.warning("[%s] Streaming fallback from %s to %s", request_id, selected_model, fallback_model)
                 _emit("record_fallback", selected_model, fallback_model, _fallback_reason(exc))
                 selected_model = fallback_model
-                async for chunk in _run(fallback_model):
-                    _capture(chunk)
-                    yield chunk
-            # Success — pin the session, then write the audit entry with real
-            # streamed token usage/cost (parity with the non-streaming path).
-            if affinity == "store":
-                _emit("record_affinity", "store")
-            self._affinity_remember(session_key, selected_model)
-            self._log_audit(
-                request_id,
-                user_id,
-                selected_model,
-                "success",
-                routing_result=routing_result,
-                pii_result=pii_result,
-                abuse_result=abuse_result,
-                result=self._stream_result(selected_model, final_usage),
-                session_key=session_key,
-                affinity=affinity,
-                span=span,
-            )
+                try:
+                    async for chunk in _run(fallback_model):
+                        _capture(chunk)
+                        yield chunk
+                except Exception as fallback_exc:
+                    _audit_error(fallback_model, fallback_exc)
+                    span_ended = True
+                    raise
+            if safety_blocked:
+                # Cut for policy — tell the client (OpenAI-standard content_filter)
+                # and audit as a block, not a success.
+                yield GenerateResult(
+                    content="",
+                    model=selected_model,
+                    usage=final_usage or UsageInfo(0, 0, 0),
+                    finish_reason="content_filter",
+                )
+                self._log_audit(
+                    request_id,
+                    user_id,
+                    selected_model,
+                    "blocked_content_safety",
+                    routing_result=routing_result,
+                    pii_result=pii_result,
+                    abuse_result=abuse_result,
+                    result=self._stream_result(selected_model, final_usage),
+                    error="Response blocked by content safety policy",
+                    session_key=session_key,
+                    affinity=affinity,
+                    span=span,
+                )
+            else:
+                # Success — pin the session (eligible turns only) + audit with usage.
+                if affinity == "store":
+                    _emit("record_affinity", "store")
+                if affinity_eligible:
+                    self._affinity_remember(session_key, selected_model)
+                self._log_audit(
+                    request_id,
+                    user_id,
+                    selected_model,
+                    "success",
+                    routing_result=routing_result,
+                    pii_result=pii_result,
+                    abuse_result=abuse_result,
+                    result=self._stream_result(selected_model, final_usage),
+                    session_key=session_key,
+                    affinity=affinity,
+                    span=span,
+                )
             span_ended = True
         finally:
             if not span_ended:

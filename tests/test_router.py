@@ -1177,6 +1177,66 @@ class TestResilience:
         engine.policy_matcher.route.assert_awaited_once()  # strategy re-consulted
         assert any(c.args == ("model-b",) for c in engine.pool.get.call_args_list)
 
+    def test_affinity_not_pinned_on_tools_turn(self):
+        engine = self._sticky_engine()  # affinity enabled, session-capable
+        asyncio.run(
+            engine.generate(
+                [{"role": "user", "content": "hi"}],
+                user_id="u",
+                session_id="s1",
+                tools=[{"type": "function", "function": {"name": "x"}}],
+            )
+        )
+        assert engine._affinity.get("sid:s1") is None  # a tools turn must not pin the session
+
+    def test_stream_error_writes_audit_entry(self):
+        engine = make_router()
+        self._base(engine)
+        err = RuntimeError("boom")
+        err.status_code = 400  # client error → no fallback, surfaces directly
+
+        async def _boom(messages, **kwargs):
+            if False:
+                yield  # make this an async generator
+            raise err
+
+        engine.pool.get.return_value.generate_stream = _boom
+
+        async def _drain():
+            async for _ in engine.generate_stream([{"role": "user", "content": "hi"}]):
+                pass
+
+        with patch.object(engine, "_log_audit") as audit, pytest.raises(RuntimeError, match="boom"):
+            asyncio.run(_drain())
+        statuses = [c.args[3] for c in audit.call_args_list]
+        assert "error" in statuses  # streaming errors are now audited (parity with non-stream)
+
+    def test_stream_content_safety_block_audits_blocked_and_signals_client(self):
+        engine = make_router()
+        self._base(engine)
+        engine.settings.guardrails.safety_enabled = True
+        engine.content_safety.check.return_value = MagicMock(safe=False, action="block", categories=["x"])
+
+        async def _stream(messages, **kwargs):
+            yield GenerateResult(
+                content="bad", model="model-a", usage=UsageInfo(0, 0, 0), finish_reason="incomplete", latency_ms=0
+            )
+
+        engine.pool.get.return_value.generate_stream = _stream
+
+        async def _collect():
+            out = []
+            async for c in engine.generate_stream([{"role": "user", "content": "hi"}]):
+                out.append(c)
+            return out
+
+        with patch.object(engine, "_log_audit") as audit:
+            chunks = asyncio.run(_collect())
+        assert chunks[-1].finish_reason == "content_filter"  # client gets the OpenAI-standard block signal
+        statuses = [c.args[3] for c in audit.call_args_list]
+        assert "blocked_content_safety" in statuses
+        assert "success" not in statuses
+
     def test_no_fallback_after_partial_stream_output(self):
         """If the primary streams content then errors, the client is NOT given a
         second model's full answer concatenated onto the partial output."""

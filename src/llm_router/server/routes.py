@@ -337,7 +337,9 @@ async def chat_completions(
             # Consume the router stream via a queue so we can interleave SSE
             # keep-alive comments while the backend is still prefilling (no chunk
             # yet) — otherwise a slow local prefill looks like a dead connection.
-            queue: asyncio.Queue = asyncio.Queue()
+            # Bounded so a fast backend + slow client applies backpressure instead
+            # of buffering the whole response in memory.
+            queue: asyncio.Queue = asyncio.Queue(maxsize=32)
 
             async def _pump() -> None:
                 try:
@@ -375,8 +377,12 @@ async def chat_completions(
                     # (content chunks carry zeros); don't let it be overwritten back.
                     if chunk.usage and chunk.usage.total_tokens:
                         streamed_usage = chunk.usage
+                    # Carry a terminal finish signal (tool_calls / content_filter /
+                    # length) even from a content-less chunk into the final delta.
+                    if chunk.finish_reason in ("tool_calls", "content_filter", "length"):
+                        last_finish_reason = chunk.finish_reason
                     # The terminal accounting chunk has no content/tool_calls — capture
-                    # its usage above but don't emit an empty delta to the client.
+                    # its usage/finish above but don't emit an empty delta to the client.
                     if not chunk.content and not chunk.tool_calls:
                         continue
                     if PROMETHEUS_ENABLED:
