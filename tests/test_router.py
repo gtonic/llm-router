@@ -1084,6 +1084,34 @@ class TestResilience:
         assert est <= (len("hi") // 4) + _TPM_OUTPUT_ESTIMATE_CAP
         assert est < 65536
 
+    def test_resolve_model_strips_provider_prefix(self):
+        engine = make_router()
+        engine.pool.list_models.return_value = ["llama-local", "gpt-5.4-nano"]
+        assert engine._resolve_model("router/gpt-5.4-nano") == "gpt-5.4-nano"
+        assert engine._resolve_model("gpt-5.4-nano") == "gpt-5.4-nano"
+        assert engine._resolve_model("router-auto") is None
+        assert engine._resolve_model("router/router-auto") is None
+        assert engine._resolve_model("auto") is None
+        assert engine._resolve_model(None) is None
+        assert engine._resolve_model("totally-unknown") == "totally-unknown"
+
+    def test_provider_prefixed_model_resolves_without_fallback(self):
+        engine = make_router()
+        self._base(engine)
+        engine.pool.list_models.return_value = ["gpt-5.4-nano", "model-a"]
+        backend = MagicMock()
+        backend.generate = AsyncMock(
+            return_value=GenerateResult(
+                content="ok", model="gpt-5.4-nano", usage=UsageInfo(1, 1, 2), finish_reason="stop", latency_ms=1.0
+            )
+        )
+        engine.pool.get.side_effect = {"gpt-5.4-nano": backend}.get
+        with patch("llm_router.router._emit") as emit:
+            result = asyncio.run(engine.generate([{"role": "user", "content": "hi"}], model="router/gpt-5.4-nano"))
+        assert result.model == "gpt-5.4-nano"
+        assert engine.pool.get.call_args_list[0].args == ("gpt-5.4-nano",)  # resolved directly
+        assert not any(c.args and c.args[0] == "record_fallback" for c in emit.call_args_list)  # no fallback
+
     def test_fallback_emits_fallback_metric(self):
         engine = make_router()
         self._base(engine)

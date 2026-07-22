@@ -341,6 +341,24 @@ class RouterPolicyEngine:
         except Exception:
             return []
 
+    def _resolve_model(self, model: str | None) -> str | None:
+        """Normalize a requested model id to a routing target, or None for 'auto'.
+
+        Tolerates a ``provider/model`` prefix some OpenAI clients add (e.g.
+        ``router/gpt-5.4-nano`` → ``gpt-5.4-nano``) so it resolves to a real
+        backend instead of KeyError-ing into the fallback path. Unknown names are
+        returned unchanged (handled by the normal routing/fallback flow).
+        """
+        if model is None or model in {"auto", "router-auto"}:
+            return None
+        available = set(self._enabled_models())
+        if model in available:
+            return model
+        suffix = model.rsplit("/", 1)[-1]  # strip a leading "provider/" prefix
+        if suffix in {"auto", "router-auto"}:
+            return None
+        return suffix if suffix in available else model
+
     def _route_cost(self) -> RoutingResult:
         """Route to the cheapest enabled backend by configured per-1M token price."""
         cheapest, best_price = None, None
@@ -506,7 +524,7 @@ class RouterPolicyEngine:
             raise AbuseDetectedError(f"Abuse detected: {abuse_result.categories}")
 
         # 4. Routing decision — session affinity first, else the strategy
-        requested_model = None if model in {None, "auto", "router-auto"} else model
+        requested_model = self._resolve_model(model)
         session_key = self._session_key(session_id, user_id)
         sticky_model = self._affinity_model(session_key) if requested_model is None and not tools else None
         if sticky_model is not None:
@@ -680,7 +698,7 @@ class RouterPolicyEngine:
             raise AbuseDetectedError(f"Abuse detected: {abuse_result.categories}")
 
         # 4. Routing decision — session affinity first, else the strategy
-        requested_model = None if model in {None, "auto", "router-auto"} else model
+        requested_model = self._resolve_model(model)
         session_key = self._session_key(session_id, user_id)
         sticky_model = self._affinity_model(session_key) if requested_model is None and not tools else None
         if sticky_model is not None:
