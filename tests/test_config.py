@@ -175,7 +175,7 @@ class TestGatewaySettings:
             assert gs.port == 9999
 
     def test_rate_limit_compat(self):
-        gs = GatewaySettings()
+        gs = GatewaySettings(_env_file=None)  # ignore any local .env override
         assert gs.rate_limit_rpm == 60
         gs.rate_limit_rpm = 120
         assert gs.rate_limit_rpm == 120

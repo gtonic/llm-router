@@ -1076,6 +1076,14 @@ class TestResilience:
         # ~4 chars/token for the prompt, plus the default output allowance
         assert large >= 4000 // 4
 
+    def test_token_estimate_caps_huge_max_tokens(self):
+        from llm_router.router import _TPM_OUTPUT_ESTIMATE_CAP, _estimate_tokens
+
+        # A large max_tokens ceiling must not dominate the TPM estimate.
+        est = _estimate_tokens([{"role": "user", "content": "hi"}], 65536)
+        assert est <= (len("hi") // 4) + _TPM_OUTPUT_ESTIMATE_CAP
+        assert est < 65536
+
     def test_fallback_emits_fallback_metric(self):
         engine = make_router()
         self._base(engine)

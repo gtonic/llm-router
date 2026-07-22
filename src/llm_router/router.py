@@ -122,14 +122,21 @@ async def _generate_stream_with_content(backend, messages: list[dict], **kwargs)
         raise EmptyResponseError(f"Backend '{backend.config.id}' returned an empty stream")
 
 
+# max_tokens is a ceiling, not a prediction — cap its contribution to the TPM
+# estimate so a large ceiling (e.g. 65536) doesn't spuriously exhaust the budget.
+_TPM_OUTPUT_ESTIMATE_CAP = 4096
+
+
 def _estimate_tokens(messages: list[dict], max_tokens: int | None) -> int:
     """Rough token estimate for TPM accounting (~4 chars/token + expected output).
 
     A real tokenizer would be exact; this cheap heuristic is enough to stop the
-    rate limiter from treating a 50k-char prompt the same as a one-liner.
+    rate limiter from treating a 50k-char prompt the same as a one-liner. The
+    output term is bounded so a high ``max_tokens`` ceiling isn't billed as fully
+    consumed.
     """
     prompt_chars = sum(len(_message_text(message)) for message in messages)
-    output_tokens = max_tokens if isinstance(max_tokens, int) and max_tokens > 0 else 256
+    output_tokens = min(max_tokens, _TPM_OUTPUT_ESTIMATE_CAP) if isinstance(max_tokens, int) and max_tokens > 0 else 256
     return max(1, prompt_chars // 4 + output_tokens)
 
 
