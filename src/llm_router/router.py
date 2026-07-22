@@ -23,6 +23,7 @@ from llm_router.routing.complexity import ComplexityDetector
 from llm_router.routing.hybrid import HybridRouter
 from llm_router.routing.policy import PolicyMatcher
 from llm_router.routing.round_robin import RoundRobinPolicy
+from llm_router.routing.session_affinity import SessionAffinityStore
 from llm_router.tracing.otel_setup import get_tracer
 from llm_router.tracing.span_attributes import SpanAttributes
 
@@ -210,6 +211,37 @@ class RouterPolicyEngine:
         self.audit_logger = AuditLogger(self.settings.log_dir, retention_days=self.settings.audit_retention_days)
         # Per-backend circuit breakers, created lazily on first use.
         self._breakers: dict[str, CircuitBreaker] = {}
+        # Session → backend affinity ("stickiness") store.
+        self._affinity = SessionAffinityStore(
+            ttl=self.settings.session_affinity_ttl,
+            max_entries=self.settings.session_affinity_max_entries,
+        )
+
+    # ── Session affinity ──────────────────────
+
+    def _session_key(self, session_id: str | None, user_id: str | None) -> str | None:
+        """Derive the affinity key: X-Session-Id, else user_id, else none (off)."""
+        if not self.settings.session_affinity_enabled:
+            return None
+        if session_id:
+            return f"sid:{session_id}"
+        if user_id:
+            return f"uid:{user_id}"
+        return None
+
+    def _affinity_model(self, session_key: str | None) -> str | None:
+        """Return the pinned model for a session if it's still usable, else None."""
+        if session_key is None:
+            return None
+        model = self._affinity.get(session_key)
+        if model and model in self._enabled_models() and not self._is_unavailable(model):
+            return model
+        return None
+
+    def _affinity_remember(self, session_key: str | None, model: str) -> None:
+        """Pin the model that actually served this session (refreshes the TTL)."""
+        if session_key is not None and model:
+            self._affinity.set(session_key, model)
 
     def sync_runtime_models(self) -> None:
         """Synchronize routing policies with currently enabled backends."""
@@ -342,6 +374,8 @@ class RouterPolicyEngine:
         result: GenerateResult | None = None,
         error: str | None = None,
         latency_ms: float = 0.0,
+        session_key: str | None = None,
+        affinity: str | None = None,
         span=None,
     ) -> None:
         """Best-effort JSONL audit entry, correlated with the OTEL trace ID. Never raises.
@@ -369,6 +403,8 @@ class RouterPolicyEngine:
                 latency_ms=result.latency_ms if result else latency_ms,
                 error=error,
                 trace_id=trace_id,
+                session_key=session_key,
+                affinity=affinity,
             )
             self.audit_logger.log(entry)
             if span is not None:
@@ -406,6 +442,7 @@ class RouterPolicyEngine:
         tools: list[dict] | None = None,
         max_tokens: int | None = None,
         client_ip: str | None = None,
+        session_id: str | None = None,
     ) -> GenerateResult:
         """Run a non-streaming completion with full guardrails and tracing."""
         request_id = f"{user_id or 'anonymous'}:{int(time.time())}"
@@ -461,10 +498,20 @@ class RouterPolicyEngine:
             )
             raise AbuseDetectedError(f"Abuse detected: {abuse_result.categories}")
 
-        # 4. Routing decision
-        routing_result = await self._route(messages, routing_messages)
-
+        # 4. Routing decision — session affinity first, else the strategy
         requested_model = None if model in {None, "auto", "router-auto"} else model
+        session_key = self._session_key(session_id, user_id)
+        sticky_model = self._affinity_model(session_key) if requested_model is None and not tools else None
+        if sticky_model is not None:
+            routing_result = RoutingResult(
+                model_id=sticky_model, strategy=self.routing_strategy.value, metadata={"affinity": "hit"}
+            )
+            affinity = "hit"
+            _emit("record_affinity", "hit")
+        else:
+            routing_result = await self._route(messages, routing_messages)
+            affinity = "store" if session_key is not None else None
+
         selected_model = requested_model or routing_result.model_id or self.default_model
         if tools and requested_model is None:
             selected_model = self.default_model
@@ -552,7 +599,10 @@ class RouterPolicyEngine:
             result.latency_ms,
         )
 
-        # 8. Audit log
+        # 8. Pin the session to the backend that served it, and audit.
+        if affinity == "store":
+            _emit("record_affinity", "store")
+        self._affinity_remember(session_key, selected_model)
         self._log_audit(
             request_id,
             user_id,
@@ -562,6 +612,8 @@ class RouterPolicyEngine:
             pii_result=pii_result,
             abuse_result=abuse_result,
             result=result,
+            session_key=session_key,
+            affinity=affinity,
             span=span,
         )
         return result
@@ -575,6 +627,7 @@ class RouterPolicyEngine:
         tools: list[dict] | None = None,
         max_tokens: int | None = None,
         client_ip: str | None = None,
+        session_id: str | None = None,
     ) -> AsyncIterator[GenerateResult]:
         """Run a streaming completion with full guardrails and tracing."""
         request_id = f"{user_id or 'anonymous'}:{int(time.time())}"
@@ -619,10 +672,20 @@ class RouterPolicyEngine:
             )
             raise AbuseDetectedError(f"Abuse detected: {abuse_result.categories}")
 
-        # 4. Routing decision
-        routing_result = await self._route(messages, routing_messages)
-
+        # 4. Routing decision — session affinity first, else the strategy
         requested_model = None if model in {None, "auto", "router-auto"} else model
+        session_key = self._session_key(session_id, user_id)
+        sticky_model = self._affinity_model(session_key) if requested_model is None and not tools else None
+        if sticky_model is not None:
+            routing_result = RoutingResult(
+                model_id=sticky_model, strategy=self.routing_strategy.value, metadata={"affinity": "hit"}
+            )
+            affinity = "hit"
+            _emit("record_affinity", "hit")
+        else:
+            routing_result = await self._route(messages, routing_messages)
+            affinity = "store" if session_key is not None else None
+
         selected_model = requested_model or routing_result.model_id or self.default_model
         if tools and requested_model is None:
             selected_model = self.default_model
@@ -708,8 +771,11 @@ class RouterPolicyEngine:
                 async for chunk in _run(fallback_model):
                     _capture(chunk)
                     yield chunk
-            # Success — write the audit entry with real streamed token usage/cost
-            # (the non-streaming path already does this; streaming used to skip it).
+            # Success — pin the session, then write the audit entry with real
+            # streamed token usage/cost (parity with the non-streaming path).
+            if affinity == "store":
+                _emit("record_affinity", "store")
+            self._affinity_remember(session_key, selected_model)
             self._log_audit(
                 request_id,
                 user_id,
@@ -719,6 +785,8 @@ class RouterPolicyEngine:
                 pii_result=pii_result,
                 abuse_result=abuse_result,
                 result=self._stream_result(selected_model, final_usage),
+                session_key=session_key,
+                affinity=affinity,
                 span=span,
             )
             span_ended = True

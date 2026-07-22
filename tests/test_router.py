@@ -1095,6 +1095,52 @@ class TestResilience:
         assert result.model == "fallback"
         assert any(c.args == ("record_fallback", "primary", "fallback", "RuntimeError") for c in emit.call_args_list)
 
+    def _sticky_engine(self):
+        engine = make_router()
+        self._base(engine, routed="model-a")
+        engine.settings.session_affinity_enabled = True
+        engine.pool.list_models.return_value = ["model-a", "model-b"]
+        engine.pool.get.return_value.generate = AsyncMock(
+            return_value=GenerateResult(
+                content="ok", model="served", usage=UsageInfo(1, 1, 2), finish_reason="stop", latency_ms=1.0
+            )
+        )
+        return engine
+
+    def test_session_sticks_to_first_backend(self):
+        engine = self._sticky_engine()
+        # 1st request routes via strategy to model-a and pins the session.
+        asyncio.run(engine.generate([{"role": "user", "content": "hi"}], user_id="u", session_id="s1"))
+        # strategy now WOULD pick model-b, but the session is pinned to model-a.
+        engine.policy_matcher.route = AsyncMock(return_value=MagicMock(model_id="model-b", strategy="policy"))
+        engine.pool.get.reset_mock()
+        asyncio.run(engine.generate([{"role": "user", "content": "again"}], user_id="u", session_id="s1"))
+        assert any(c.args == ("model-a",) for c in engine.pool.get.call_args_list)
+        assert all(c.args != ("model-b",) for c in engine.pool.get.call_args_list)
+        engine.policy_matcher.route.assert_not_awaited()  # strategy skipped on the sticky hit
+
+    def test_no_stickiness_when_disabled(self):
+        engine = self._sticky_engine()
+        engine.settings.session_affinity_enabled = False
+        asyncio.run(engine.generate([{"role": "user", "content": "hi"}], user_id="u", session_id="s1"))
+        engine.policy_matcher.route = AsyncMock(return_value=MagicMock(model_id="model-b", strategy="policy"))
+        engine.pool.get.reset_mock()
+        asyncio.run(engine.generate([{"role": "user", "content": "again"}], user_id="u", session_id="s1"))
+        assert any(c.args == ("model-b",) for c in engine.pool.get.call_args_list)  # re-routed, not sticky
+
+    def test_sticky_falls_back_to_strategy_when_pinned_model_unavailable(self):
+        engine = self._sticky_engine()
+        asyncio.run(engine.generate([{"role": "user", "content": "hi"}], user_id="u", session_id="s1"))
+        # model-a's breaker opens → the pin is no longer usable.
+        breaker = engine._breaker("model-a")
+        for _ in range(engine.settings.circuit_breaker_threshold):
+            breaker.record_failure()
+        engine.policy_matcher.route = AsyncMock(return_value=MagicMock(model_id="model-b", strategy="policy"))
+        engine.pool.get.reset_mock()
+        asyncio.run(engine.generate([{"role": "user", "content": "again"}], user_id="u", session_id="s1"))
+        engine.policy_matcher.route.assert_awaited_once()  # strategy re-consulted
+        assert any(c.args == ("model-b",) for c in engine.pool.get.call_args_list)
+
     def test_no_fallback_after_partial_stream_output(self):
         """If the primary streams content then errors, the client is NOT given a
         second model's full answer concatenated onto the partial output."""

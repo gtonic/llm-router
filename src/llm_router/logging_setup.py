@@ -36,6 +36,8 @@ class AuditEntry:
     latency_ms: float = 0.0
     error: str | None = None
     trace_id: str | None = None
+    session_key: str | None = None
+    affinity: str | None = None  # "hit" | "store" | None
     timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     def to_dict(self) -> dict:
@@ -57,6 +59,8 @@ class AuditEntry:
             "latency_ms": self.latency_ms,
             "error": self.error,
             "status": self.status,
+            "session_key": self.session_key,
+            "affinity": self.affinity,
         }
 
 

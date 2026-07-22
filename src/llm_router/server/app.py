@@ -152,6 +152,12 @@ try:
         ["model"],
     )
 
+    SESSION_AFFINITY = Counter(
+        "llm_router_session_affinity_total",
+        "Session-affinity routing decisions (hit = reused sticky backend, store = new pin)",
+        ["result"],
+    )
+
     BACKEND_HEALTH = Gauge(
         "llm_router_backend_health",
         "Backend health status (1 healthy, 0 unhealthy)",
@@ -225,6 +231,10 @@ try:
         """Record a backend's circuit breaker opening."""
         CIRCUIT_BREAKER_TRIPS.labels(model=model).inc()
 
+    def record_affinity(result: str):
+        """Record a session-affinity decision ('hit' or 'store')."""
+        SESSION_AFFINITY.labels(result=result).inc()
+
     def record_ttft(model: str, seconds: float):
         """Record streaming time-to-first-token for a model."""
         TIME_TO_FIRST_TOKEN.labels(model=model).observe(seconds)
@@ -278,6 +288,9 @@ except ImportError:
         pass
 
     def record_circuit_open(*args, **kwargs):
+        pass
+
+    def record_affinity(*args, **kwargs):
         pass
 
     def record_ttft(*args, **kwargs):

@@ -222,6 +222,7 @@ async def chat_completions(
     request: Request,
     body: ChatCompletionRequest,
     principal: str = Depends(require_api_key),
+    x_session_id: str | None = Header(default=None, alias="X-Session-Id"),
 ):
     """OpenAI-compatible chat completion endpoint.
 
@@ -256,6 +257,7 @@ async def chat_completions(
                 tools=body.tools,
                 max_tokens=body.max_tokens,
                 client_ip=client_ip,
+                session_id=x_session_id,
             )
             elapsed = time.perf_counter() - start
             elapsed_ms = elapsed * 1000
@@ -333,6 +335,7 @@ async def chat_completions(
                 tools=body.tools,
                 max_tokens=body.max_tokens,
                 client_ip=client_ip,
+                session_id=x_session_id,
             ):
                 streamed_model = chunk.model or streamed_model
                 # Keep the real token usage from the terminal accounting chunk

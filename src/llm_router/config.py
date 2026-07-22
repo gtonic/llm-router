@@ -274,6 +274,13 @@ class GatewaySettings(BaseSettings):
     circuit_breaker_threshold: int = 5  # consecutive failures before opening
     circuit_breaker_cooldown: float = 30.0  # seconds a backend stays skipped
 
+    # ── Session affinity ──────────────────────
+    # Stick a session (X-Session-Id header, else user_id) to the backend that
+    # first served it, for consistency + warm prefix cache. Opt-in.
+    session_affinity_enabled: bool = False
+    session_affinity_ttl: float = 1800.0  # seconds a session stays pinned
+    session_affinity_max_entries: int = 10000
+
     # ── Guardrails ────────────────────────────
     guardrails_input: bool = True
     guardrails_output: bool = True
