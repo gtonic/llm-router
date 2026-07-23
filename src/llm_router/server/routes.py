@@ -33,6 +33,11 @@ from llm_router.models import (
 )
 from llm_router.pool.pool import ModelPool
 from llm_router.router import AbuseDetectedError, RateLimitExceededError
+from llm_router.security import (
+    UnsafeBackendURLError,
+    is_safe_regex_pattern,
+    validate_backend_url,
+)
 from llm_router.server.app import (
     PROMETHEUS_ENABLED,
     record_active_end,
@@ -259,11 +264,15 @@ async def chat_completions(
 
     client_ip = request.client.host if request.client else None
     # Bind the rate-limit / audit identity to the authenticated key when auth is
-    # enabled; the body's user_id/api_key are client-controlled and spoofable.
+    # enabled. The body's user_id/api_key are client-controlled and spoofable, so
+    # in anonymous mode we deliberately ignore them and fall back to the client IP
+    # (the engine derives client_id = user_id or api_key or client_ip). Otherwise a
+    # caller could rotate user_id per request to evade rate limits and grow the
+    # limiter's per-identity state without bound.
     if principal != "anonymous":
         eff_user_id, eff_api_key = principal, None
     else:
-        eff_user_id, eff_api_key = body.user_id, body.api_key
+        eff_user_id, eff_api_key = None, None
 
     # Non-streaming
     if not body.stream:
@@ -333,12 +342,17 @@ async def chat_completions(
                 record_error(model=body.model or "unknown", error_type=type(exc).__name__)
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:
-            logger.error("[%s] Error: %s", request_id, exc)
+            logger.error("[%s] Error: %s", request_id, exc, exc_info=True)
             if PROMETHEUS_ENABLED:
                 record_error(model=body.model or "unknown", error_type=type(exc).__name__)
                 if type(exc).__name__ == "EmptyResponseError":
                     record_empty_response(body.model or "unknown")
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            # Never leak internal detail (backend URLs, provider errors) to the
+            # client; the full exception is logged above under request_id.
+            raise HTTPException(
+                status_code=500,
+                detail=f"Internal error while processing request (id: {request_id})",
+            ) from exc
         finally:
             if PROMETHEUS_ENABLED:
                 record_active_end()
@@ -530,7 +544,8 @@ async def check_guardrails(request: Request):
         else:
             return {"error": "Invalid mode. Use 'pii', 'abuse', or 'safety'."}
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        logger.warning("guardrails/check failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=400, detail="Guardrail check failed: invalid request") from exc
 
 
 @admin_router.post("/reload")
@@ -552,7 +567,8 @@ async def reload_config():
             "models": len(router_engine.pool.list_models()),
         }
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        logger.error("reload failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Reload failed") from exc
 
 
 # ───────────────────────────────────────────
@@ -623,6 +639,12 @@ async def create_model_backend(body: ModelBackendCreate):
             status_code=400,
             detail=f"Invalid type '{body.type}'. Must be 'local' or 'remote'.",
         )
+
+    # Validate base_url against SSRF-prone targets (link-local / cloud metadata).
+    try:
+        validate_backend_url(body.base_url)
+    except UnsafeBackendURLError as exc:
+        raise HTTPException(status_code=400, detail=f"Rejected base_url: {exc}") from exc
 
     # Create config and backend
     cfg = ModelBackendConfig(
@@ -726,6 +748,11 @@ async def update_model_backend(model_id: str, body: ModelBackendUpdate):
 
     # Apply partial update and rebuild the live client for connection changes.
     updates = body.model_dump(exclude_unset=True)
+    if "base_url" in updates:
+        try:
+            validate_backend_url(updates["base_url"])
+        except UnsafeBackendURLError as exc:
+            raise HTTPException(status_code=400, detail=f"Rejected base_url: {exc}") from exc
     candidate = type(config)(**{**config.__dict__, **updates})
     if {"base_url", "api_key", "model_name"}.intersection(updates):
         try:
@@ -1096,6 +1123,12 @@ async def add_pii_pattern(body: PiiPatternCreate):
     if router_engine is None:
         raise HTTPException(status_code=503, detail="Router not initialized")
 
+    # Reject catastrophic-backtracking (ReDoS) shapes before compiling — the
+    # pattern is persisted and run against every request's text.
+    safe, reason = is_safe_regex_pattern(body.pattern)
+    if not safe:
+        raise HTTPException(status_code=400, detail=f"Rejected pattern: {reason}")
+
     try:
         compiled = re.compile(body.pattern)
     except re.error as exc:
@@ -1232,6 +1265,11 @@ async def get_system_health():
 
     health_results = await router_engine.pool.health_check_all()
 
+    # This endpoint is UNAUTHENTICATED (the Docker healthcheck polls it), so the
+    # payload is deliberately minimal: only the readiness signal the healthcheck
+    # needs. Backend names/types, the raw error string (which can carry internal
+    # URLs), routing strategy and guardrail config are NOT exposed here — the
+    # full detail lives behind auth at /v1/system/metrics and /v1/system/manifest.
     backends = {}
     all_healthy = True
     for mid, backend in router_engine.pool._backends.items():
@@ -1241,12 +1279,8 @@ async def get_system_health():
         if PROMETHEUS_ENABLED:
             record_backend_health(mid, backend.config.type, status.healthy)
         backends[mid] = {
-            "id": mid,
-            "name": backend.config.name,
-            "type": backend.config.type,
             "healthy": status.healthy,
             "latency_ms": round(status.latency_ms, 1),
-            "error": status.error,
         }
         if not status.healthy:
             all_healthy = False
@@ -1255,14 +1289,6 @@ async def get_system_health():
         "status": "healthy" if all_healthy else "degraded",
         "version": "0.1.0",
         "backends": backends,
-        "routing_strategy": router_engine.routing_strategy.value,
-        "guardrails": {
-            "pii_enabled": router_engine.settings.guardrails.pii_enabled,
-            "abuse_enabled": router_engine.settings.guardrails.abuse_enabled,
-            "content_safety_enabled": router_engine.settings.guardrails.safety_enabled,
-            "rate_limiting_enabled": router_engine.settings.rate_limit.enabled,
-        },
-        "policies_loaded": len(router_engine.policy_matcher.rules),
     }
 
 

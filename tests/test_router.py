@@ -1191,13 +1191,24 @@ class TestResilience:
         result = asyncio.run(engine._route([{"role": "user", "content": "hi"}], [{"role": "user", "content": "hi"}]))
         assert result.model_id == "b"  # observed request latency wins over the health ping
 
-    def test_bounded_guardrail_text_takes_recent_tail(self):
-        from llm_router.router import _bounded_guardrail_text
+    def test_guardrail_text_scans_full_current_turn(self):
+        from llm_router.router import _guardrail_text
 
-        msgs = [{"role": "user", "content": "x" * 1000}, {"role": "user", "content": "recent"}]
-        r = _bounded_guardrail_text(msgs, max_tokens=2)  # budget = 8 chars
-        assert "recent" in r  # the current turn (tail) is scanned
-        assert len(r) <= 8  # bounded, not the whole 1000+ chars
+        # A marker at the START of a large current message must stay in scope —
+        # truncating the current turn would be a PII-redaction bypass.
+        current = "SECRET " + ("a" * 5000)
+        msgs = [{"role": "user", "content": "old " * 1000}, {"role": "user", "content": current}]
+        r = _guardrail_text(msgs, history_max_tokens=2)
+        assert "SECRET" in r  # beginning of the current turn is scanned
+        assert r.endswith("a" * 10)  # current turn included in full
+
+    def test_guardrail_text_bounds_history(self):
+        from llm_router.router import _guardrail_text
+
+        msgs = [{"role": "user", "content": "H" * 1000}, {"role": "user", "content": "now"}]
+        r = _guardrail_text(msgs, history_max_tokens=2)  # history budget = 8 chars
+        assert "now" in r  # current turn present
+        assert r.count("H") <= 8  # older turn is bounded, not scanned whole
 
     def test_guardrails_skipped_when_disabled(self):
         engine = make_router()

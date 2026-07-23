@@ -445,13 +445,13 @@ def build_manifest(
         default_strategy=settings.default_strategy.value,
     )
 
-    # Model backends
+    # Model backends. base_url is intentionally omitted — it exposes internal
+    # infrastructure (backend hostnames/ports) and is not needed for discovery.
     manifest.models = [
         {
             "id": m.id,
             "name": m.name,
             "type": m.type,
-            "base_url": m.base_url,
             "enabled": m.enabled,
             "is_local": m.is_local,
             "is_remote": m.is_remote,
