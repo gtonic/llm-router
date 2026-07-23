@@ -288,6 +288,8 @@ class GatewaySettings(BaseSettings):
     guardrails_output: bool = True
     guardrails: GuardrailConfig = field(default_factory=GuardrailConfig)
     rate_limit: RateLimitConfig = field(default_factory=RateLimitConfig)
+    # App-written runtime state (admin API). Note: `config/` (this, mutable state)
+    # is deliberately distinct from `configs/` (static Prometheus/Grafana ops config).
     runtime_config_path: str = "config/runtime.yaml"
 
     # Flat env overrides for the nested rate-limit config, so operators can use
@@ -479,6 +481,11 @@ class GatewaySettings(BaseSettings):
         with open(target, encoding="utf-8") as fh:
             payload = yaml.safe_load(fh) or {}
         for key, value in payload.get("guardrails", {}).items():
+            # Explicit env config wins over a persisted runtime snapshot (symmetric
+            # with rate_limit below) so a stale file can't silently re-enable/disable
+            # a safety-critical toggle set via the environment.
+            if f"ROUTER_GUARDRAILS_{key.upper()}" in os.environ:
+                continue
             if hasattr(self.guardrails, key):
                 setattr(self.guardrails, key, value)
         for key, value in payload.get("rate_limit", {}).items():

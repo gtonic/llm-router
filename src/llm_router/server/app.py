@@ -355,12 +355,38 @@ async def _prewarm_local_backends(pool: ModelPool, timeout: float = 30.0) -> Non
 
 
 @asynccontextmanager
+def _configure_logging(level: str) -> None:
+    """Attach a stdout handler to the app logger so INFO logs actually surface.
+
+    Without this the ``llm-router`` logger has no handler and only WARNING+ leaks
+    out via ``logging.lastResort`` — request-complete / routing lines are invisible.
+    """
+    app_logger = logging.getLogger("llm-router")
+    if not app_logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+        app_logger.addHandler(handler)
+        app_logger.setLevel(getattr(logging, str(level).upper(), logging.INFO))
+        app_logger.propagate = False  # don't double-log via root/uvicorn
+
+
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application startup and shutdown."""
     # Startup
     global router_engine
     settings = GatewaySettings()
+    _configure_logging(settings.log_level)
     settings.load_runtime_config()
+    logger.info(
+        "Effective config: strategy=%s rate_limit(rpm=%s tpm=%s enabled=%s) guardrails(pii=%s abuse=%s safety=%s)",
+        settings.default_strategy.value,
+        settings.rate_limit.rpm,
+        settings.rate_limit.tpm,
+        settings.rate_limit.enabled,
+        settings.guardrails.pii_enabled,
+        settings.guardrails.abuse_enabled,
+        settings.guardrails.safety_enabled,
+    )
 
     if not settings.data_plane_keys():
         logger.warning(

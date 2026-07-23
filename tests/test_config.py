@@ -205,6 +205,24 @@ class TestGatewaySettings:
             gs.load_runtime_config(rc)
             assert gs.rate_limit.tpm == 99999  # no env → runtime config applies
 
+    def test_env_guardrail_wins_over_persisted_runtime_config(self, tmp_path):
+        rc = tmp_path / "runtime.yaml"
+        rc.write_text("guardrails:\n  safety_enabled: false\n")
+        with patch.dict(os.environ, {"ROUTER_GUARDRAILS_SAFETY_ENABLED": "true"}):
+            gs = GatewaySettings(_env_file=None)
+            gs.load_runtime_config(rc)
+            # env presence blocks the stale runtime override (stays at the default)
+            assert gs.guardrails.safety_enabled is True
+
+    def test_guardrail_runtime_config_applies_without_env(self, tmp_path):
+        rc = tmp_path / "runtime.yaml"
+        rc.write_text("guardrails:\n  safety_enabled: false\n")
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("ROUTER_GUARDRAILS_SAFETY_ENABLED", None)
+            gs = GatewaySettings(_env_file=None)
+            gs.load_runtime_config(rc)
+            assert gs.guardrails.safety_enabled is False
+
     def test_guardrail_compat(self):
         gs = GatewaySettings()
         assert gs.pii_redact is True
