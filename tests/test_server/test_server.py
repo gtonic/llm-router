@@ -86,6 +86,7 @@ def make_test_client():
         default_model="test-model",
     )
     engine.settings.admin_token = "test-admin"
+    engine.settings.allow_anonymous = True  # tests exercise the open path unless they set keys
 
     result = GenerateResult(
         content="Mocked response",
@@ -232,10 +233,21 @@ class TestDataPlaneAuth:
 
         app_mod.router_engine.settings.api_keys = value
 
-    def test_open_when_no_keys_configured(self):
-        client = make_test_client()  # api_keys="" by default → auth disabled
+    def test_open_when_anonymous_explicitly_allowed(self):
+        client = make_test_client()  # fixture sets allow_anonymous=True, no keys
         resp = client.post("/v1/chat/completions", json=self._payload())
         assert resp.status_code == 200
+
+    def test_fail_closed_when_no_keys_and_anonymous_disallowed(self):
+        client = make_test_client()
+        import llm_router.server.app as app_mod
+
+        app_mod.router_engine.settings.allow_anonymous = False  # secure default
+        try:
+            resp = client.post("/v1/chat/completions", json=self._payload())
+            assert resp.status_code == 401  # no keys + no opt-in → rejected
+        finally:
+            app_mod.router_engine.settings.allow_anonymous = True
 
     def test_rejects_missing_key_when_configured(self):
         client = make_test_client()

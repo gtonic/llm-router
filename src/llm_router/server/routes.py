@@ -92,9 +92,20 @@ def require_api_key(
 
     from llm_router.server.app import router_engine
 
-    keys = router_engine.settings.data_plane_keys() if router_engine else set()
-    if not keys:
+    settings = router_engine.settings if router_engine else None
+    if settings is None:
+        # Not initialized — let the handler return 503; no inference can happen.
         return "anonymous"
+    keys = settings.data_plane_keys()
+    if not keys:
+        # Secure by default: no keys configured → reject, unless anonymous access
+        # was explicitly opted into (trusted/local network).
+        if settings.allow_anonymous:
+            return "anonymous"
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required: set ROUTER_API_KEYS, or ROUTER_ALLOW_ANONYMOUS=true for open access.",
+        )
     presented: str | None = None
     if authorization and authorization.lower().startswith("bearer "):
         presented = authorization[7:].strip()

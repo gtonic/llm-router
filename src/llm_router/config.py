@@ -259,9 +259,11 @@ class GatewaySettings(BaseSettings):
     default_model: str = "llama-local"
     fallback_model: str = "gpt-5.4-nano"
     admin_token: str = ""
-    # Comma-separated data-plane API keys (env ROUTER_API_KEYS). Empty means the
-    # inference API is UNAUTHENTICATED — a loud warning is logged at startup.
+    # Comma-separated data-plane API keys (env ROUTER_API_KEYS).
     api_keys: str = ""
+    # Secure by default: with no api_keys set, the inference API rejects requests
+    # (401) unless anonymous access is explicitly opted into for a trusted network.
+    allow_anonymous: bool = False
 
     # ── Model Backends ────────────────────────
     models_dir: str = "profiles"

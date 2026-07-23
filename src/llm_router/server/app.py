@@ -389,11 +389,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
 
     if not settings.data_plane_keys():
-        logger.warning(
-            "Data-plane authentication is DISABLED (ROUTER_API_KEYS not set) — the "
-            "inference API accepts unauthenticated requests. Set ROUTER_API_KEYS to a "
-            "comma-separated key list to require Authorization: Bearer <key>."
-        )
+        if settings.allow_anonymous:
+            logger.warning(
+                "Data-plane authentication is DISABLED: ROUTER_ALLOW_ANONYMOUS=true — the "
+                "inference API accepts UNAUTHENTICATED requests. Set ROUTER_API_KEYS for a "
+                "trusted key list before exposing this beyond a trusted network."
+            )
+        else:
+            logger.info(
+                "Data-plane is fail-closed: no ROUTER_API_KEYS set, so gated endpoints return "
+                "401. Set ROUTER_API_KEYS, or ROUTER_ALLOW_ANONYMOUS=true for open access."
+            )
 
     # Initialize OpenTelemetry
     if settings.otlp_enabled:

@@ -226,8 +226,9 @@ ROUTER_DEFAULT_MODEL=local
 ROUTER_FALLBACK_MODEL=gpt-4o-mini
 ROUTER_STRICT_CONFIG=true               # fail fast on misconfiguration
 
-# ── Data-plane auth (REQUIRED in production) ───────────────
-# Comma-separated keys. Empty = the inference API is OPEN to anyone who can reach it.
+# ── Data-plane auth ────────────────────────────────────────
+# Secure by default: with no keys the inference API is fail-closed (401).
+# Set keys to require them, or ROUTER_ALLOW_ANONYMOUS=true for a trusted network.
 ROUTER_API_KEYS=sk-team-alpha,sk-team-beta
 ROUTER_ADMIN_TOKEN=replace-with-a-long-random-token
 
@@ -250,7 +251,7 @@ ROUTER_OTELP_ENDPOINT=http://jaeger:4317/v1/traces
 OPENAI_API_KEY=sk-...
 ```
 
-> 🔐 **Security note:** if `ROUTER_API_KEYS` is empty the inference API accepts unauthenticated requests (and logs a loud warning at startup). Set it before exposing the router beyond a trusted network.
+> 🔐 **Security note:** the inference API is **fail-closed by default** — with no `ROUTER_API_KEYS` set, gated endpoints return `401`. For a trusted/local network, set `ROUTER_ALLOW_ANONYMOUS=true` to opt into open access (a loud warning is logged).
 
 ---
 
@@ -324,7 +325,7 @@ curl http://localhost:8000/system/capabilities                    # allowed life
 | `/admin/rollback` | POST | Restore previous runtime config | 🛠️ admin token |
 | `/.well-known/agent-skills/…` | GET | Agent Skill discovery + hosted `SKILL.md` | open |
 
-> `🔑 data-plane` endpoints require a valid API key **only when `ROUTER_API_KEYS` is set** (otherwise open, with a startup warning).
+> `🔑 data-plane` endpoints require a valid API key. Fail-closed by default (`401` with no keys); set `ROUTER_ALLOW_ANONYMOUS=true` to allow unauthenticated access on a trusted network.
 
 ## ⚙️ Configuration reference
 
