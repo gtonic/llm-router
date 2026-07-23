@@ -699,7 +699,9 @@ class TestAdminReloadEndpoint:
         try:
             resp = self._post_reload(client)
             assert resp.status_code == 500
-            assert "config load failed" in resp.json()["detail"]
+            # Internal error detail must NOT leak to the client (only a generic message).
+            assert "config load failed" not in resp.json()["detail"]
+            assert resp.json()["detail"] == "Reload failed"
         finally:
             app_mod.router_engine.policy_matcher._load_policies = original
 

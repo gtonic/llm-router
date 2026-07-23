@@ -491,10 +491,82 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 MAX_REQUEST_BYTES = 8 * 1024 * 1024  # 8 MiB
 
 
+class BodySizeLimitMiddleware:
+    """Reject request bodies larger than ``max_bytes`` (413).
+
+    Unlike a Content-Length check, this also caps chunked / no-length bodies:
+    it buffers the incoming body up to the limit and rejects as soon as it is
+    exceeded, then replays the buffered body downstream. Memory stays bounded
+    to ``max_bytes`` regardless of what the client declares.
+    """
+
+    def __init__(self, app, max_bytes: int) -> None:
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http" or scope.get("method") not in ("POST", "PUT", "PATCH"):
+            await self.app(scope, receive, send)
+            return
+
+        # Fast path: an honest Content-Length over the cap → reject immediately.
+        for name, value in scope.get("headers", []):
+            if name == b"content-length":
+                try:
+                    if int(value) > self.max_bytes:
+                        await self._reject(send)
+                        return
+                except ValueError:
+                    pass
+                break
+
+        body = bytearray()
+        more_body = True
+        while more_body:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                await self.app(scope, _disconnect_receive, send)
+                return
+            if message["type"] != "http.request":
+                continue
+            body.extend(message.get("body", b""))
+            more_body = message.get("more_body", False)
+            if len(body) > self.max_bytes:
+                await self._reject(send)
+                return
+
+        replayed = False
+
+        async def replay():
+            nonlocal replayed
+            if not replayed:
+                replayed = True
+                return {"type": "http.request", "body": bytes(body), "more_body": False}
+            # Body fully delivered. Delegate further reads to the real transport so
+            # disconnect detection (e.g. StreamingResponse's listen_for_disconnect)
+            # blocks until the client actually goes away — returning synthetic
+            # messages here would spin that loop at 100% CPU.
+            return await receive()
+
+        await self.app(scope, replay, send)
+
+    async def _reject(self, send) -> None:
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 413,
+                "headers": [(b"content-type", b"application/json")],
+            }
+        )
+        await send({"type": "http.response.body", "body": b'{"detail":"Request body too large"}'})
+
+
+async def _disconnect_receive():
+    return {"type": "http.disconnect"}
+
+
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
-    from starlette.responses import JSONResponse
-
     from llm_router.server.routes import admin_router, skill_router, system_router
     from llm_router.server.routes import router as routes_router
 
@@ -505,18 +577,9 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    @app.middleware("http")
-    async def _limit_body_size(request, call_next):
-        """Reject oversized requests up front via the Content-Length header."""
-        content_length = request.headers.get("content-length")
-        if content_length is not None:
-            try:
-                too_large = int(content_length) > MAX_REQUEST_BYTES
-            except ValueError:
-                too_large = False
-            if too_large:
-                return JSONResponse({"detail": "Request body too large"}, status_code=413)
-        return await call_next(request)
+    # Body-size guard: caps the request body even without a Content-Length
+    # (chunked transfer) so an oversized/streamed body can't exhaust memory.
+    app.add_middleware(BodySizeLimitMiddleware, max_bytes=MAX_REQUEST_BYTES)
 
     # CORS middleware — origins come from ROUTER_CORS_ORIGINS (default "*").
     # "*" together with allow_credentials=True is an invalid/insecure combo

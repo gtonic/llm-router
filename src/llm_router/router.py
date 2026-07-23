@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 import time
@@ -152,24 +153,30 @@ def _message_text(message: dict) -> str:
     return ""
 
 
-def _bounded_guardrail_text(messages: list[dict], max_tokens: int) -> str:
-    """Concatenate the most-recent message text up to ~``max_tokens`` (4 chars/token).
+def _guardrail_text(messages: list[dict], history_max_tokens: int) -> str:
+    """Text for PII/abuse scanning: the FULL current turn plus bounded history.
 
-    Guardrail (PII/abuse) scanning is O(text length) and runs synchronously in the
-    async request handler; scanning a full 74k-token context is ~70 ms of CPU that
-    blocks the event loop. Bounding to the recent tail keeps it cheap — older turns
-    were already scanned on their own request, and the current turn is at the end.
+    The current (last) message is scanned in full — that is where a client injects
+    PII/abuse in *this* request, so truncating it would be a redaction bypass. Older
+    turns were already scanned on their own request, so only a bounded tail of them
+    (~``history_max_tokens`` at 4 chars/token) is included to keep the scan cheap.
+    Callers run this scan in a worker thread (``asyncio.to_thread``) so even a large
+    current turn does not block the event loop.
     """
-    budget = max(1, max_tokens) * 4
-    parts: list[str] = []
+    if not messages:
+        return ""
+    current = _message_text(messages[-1])
+    budget = max(1, history_max_tokens) * 4
+    history: list[str] = []
     total = 0
-    for message in reversed(messages):
+    for message in reversed(messages[:-1]):
         text = _message_text(message)
-        parts.append(text)
+        history.append(text)
         total += len(text) + 1
         if total >= budget:
             break
-    return " ".join(reversed(parts))[-budget:]
+    prefix = " ".join(reversed(history))[-budget:]
+    return f"{prefix} {current}" if prefix else current
 
 
 def _redact_messages(messages: list[dict], pii_filter: PiiFilter) -> list[dict]:
@@ -535,19 +542,18 @@ class RouterPolicyEngine:
         pii_enabled = self.settings.guardrails.pii_enabled
         abuse_enabled = self.settings.guardrails.abuse_enabled
         routing_messages = messages
-        # Scan only a bounded recent window (skip entirely when both are off).
+        # Scan the full current turn (+ bounded history) off the event loop so a
+        # large message can't block it — and can't slip PII past a truncated scan.
         full_text = (
-            _bounded_guardrail_text(messages, self.settings.guardrails.pii_max_tokens)
-            if (pii_enabled or abuse_enabled)
-            else ""
+            _guardrail_text(messages, self.settings.guardrails.pii_max_tokens) if (pii_enabled or abuse_enabled) else ""
         )
-        pii_result = self.pii_filter.check(full_text, mode="input") if pii_enabled else None
+        pii_result = await asyncio.to_thread(self.pii_filter.check, full_text, "input") if pii_enabled else None
         if pii_result is not None and pii_result.has_pii:
             logger.info("[%s] PII detected: %s", request_id, pii_result.patterns)
             messages = _redact_messages(messages, self.pii_filter)
 
         # 3. Input abuse filter
-        abuse_result = self.abuse_filter.check(full_text) if abuse_enabled else None
+        abuse_result = await asyncio.to_thread(self.abuse_filter.check, full_text) if abuse_enabled else None
         if abuse_result is not None and not abuse_result.safe:
             logger.warning(
                 "[%s] Abuse detected (score=%.2f): %s",
@@ -729,18 +735,17 @@ class RouterPolicyEngine:
         pii_enabled = self.settings.guardrails.pii_enabled
         abuse_enabled = self.settings.guardrails.abuse_enabled
         routing_messages = messages
-        # Scan only a bounded recent window (skip entirely when both are off).
+        # Scan the full current turn (+ bounded history) off the event loop so a
+        # large message can't block it — and can't slip PII past a truncated scan.
         full_text = (
-            _bounded_guardrail_text(messages, self.settings.guardrails.pii_max_tokens)
-            if (pii_enabled or abuse_enabled)
-            else ""
+            _guardrail_text(messages, self.settings.guardrails.pii_max_tokens) if (pii_enabled or abuse_enabled) else ""
         )
-        pii_result = self.pii_filter.check(full_text, mode="input") if pii_enabled else None
+        pii_result = await asyncio.to_thread(self.pii_filter.check, full_text, "input") if pii_enabled else None
         if pii_result is not None and pii_result.has_pii:
             messages = _redact_messages(messages, self.pii_filter)
 
         # 3. Input abuse filter
-        abuse_result = self.abuse_filter.check(full_text) if abuse_enabled else None
+        abuse_result = await asyncio.to_thread(self.abuse_filter.check, full_text) if abuse_enabled else None
         if abuse_result is not None and not abuse_result.safe:
             span.set_attribute(SpanAttributes.GUARDRAIL_ABUSE_SAFE, False)
             self._log_audit(
